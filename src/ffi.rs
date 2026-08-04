@@ -253,6 +253,21 @@ pub unsafe extern "C" fn bamboo_engine_process(engine: *mut BambooEngine, key: u
     CString::new(out).unwrap_or_default().into_raw()
 }
 
+/// Removes the last output character (grapheme) from the active composition
+/// using a specific engine instance, keeping mark/tone transformations on
+/// earlier characters intact.
+///
+/// # Safety
+/// - `engine` must be a valid, non-null pointer to a `BambooEngine` instance.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn bamboo_engine_remove_last_output_char(engine: *mut BambooEngine) {
+    if engine.is_null() {
+        return;
+    }
+    let e = unsafe { &mut *engine };
+    e.remove_last_output_char();
+}
+
 /// Instance-based variant of [`bamboo_process_key_buf`].
 ///
 /// # Safety
