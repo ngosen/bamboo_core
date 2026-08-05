@@ -96,6 +96,22 @@ engine.remove_last_char(true);
 assert_eq!(engine.output(), "chuyên");
 ```
 
+Two backspace modes are available:
+
+- `remove_last_char(true)` — undo the **last keystroke** (O(1) via snapshot stack).
+  `tiếng` + DEL -> `tiêng`.
+- `remove_last_output_char()` — delete the **entire character before the caret**,
+  keeping mark/tone transformations on earlier characters. `tiếng` + DEL -> `tiến`:
+
+```rust
+let mut engine = Engine::new(InputMethod::telex());
+engine.process_str("tieesng", Mode::Vietnamese);
+assert_eq!(engine.output(), "tiếng");
+
+engine.remove_last_output_char();
+assert_eq!(engine.output(), "tiến");
+```
+
 ## Output Customization
 
 ```rust

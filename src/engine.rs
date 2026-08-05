@@ -1,7 +1,7 @@
 //! The core engine that processes keypresses and maintains the IME state.
 
 use crate::config::Config;
-use crate::input_method::{InputMethod, Rule};
+use crate::input_method::{EffectType, InputMethod, Rule};
 use crate::mode::{Mode, OutputOptions};
 use crate::utils::{is_upper, lower};
 
@@ -798,6 +798,56 @@ impl Engine {
         }
     }
 
+    /// Removes the last output character (grapheme) from the active composition,
+    /// keeping mark/tone transformations on earlier characters intact.
+    ///
+    /// No-op if the composition is empty. Invalidates the keystroke snapshot stack
+    /// and the DFA fast-path state.
+    pub fn remove_last_output_char(&mut self) {
+        let last = self
+            .active_slice()
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, t)| t.rule.effect_type == EffectType::Appending && t.rule.key != '\0');
+        let Some((l, _)) = last else { return };
+
+        // Compact the buffer, dropping the grapheme at `l` together with every
+        // transformation targeting it. Transformations targeting earlier graphemes
+        // keep their positions (and targets) — they are what survives the delete.
+        let mut write = 0;
+        for read in 0..self.active_len {
+            let t = self.active_buffer[read];
+            if read == l || t.target == Some(l as u8) {
+                continue;
+            }
+            if write != read {
+                self.active_buffer[write] = t;
+            }
+            write += 1;
+        }
+        self.active_len = write;
+
+        // Keystroke snapshots are stale after compaction; the DFA fast path no longer matches.
+        self.snapshot_len = 0;
+        self.current_state_id = 0;
+
+        if self.active_len > 0 {
+            let mut extra = TransformationStack::new();
+            crate::bamboo_util::refresh_last_tone_target_into(
+                &mut self.active_buffer[..self.active_len],
+                self.config.to_flags() & crate::bamboo_util::ESTD_TONE_STYLE != 0,
+                &mut extra,
+            );
+            for t in extra.as_slice() {
+                if self.active_len < MAX_ACTIVE_TRANS {
+                    self.active_buffer[self.active_len] = *t;
+                    self.active_len += 1;
+                }
+            }
+        }
+    }
+
     /// Resets the engine state, clearing committed and active text.
     pub fn reset(&mut self) {
         self.committed_text.clear();
@@ -829,5 +879,143 @@ mod tests {
         let (bs3, _bb3, ins3) = e.process_key_delta(' ', Mode::Vietnamese);
         assert_eq!(bs3, 1, "Space should clear the preedit 'á'");
         assert_eq!(ins3, "");
+    }
+
+    #[test]
+    fn remove_last_output_char_telex() {
+        let mut e = Engine::new(InputMethod::telex());
+
+        // `tiếng` -> drops `g`, keeps the `s` tone on `ê`.
+        e.process_str("tieesng", Mode::Vietnamese);
+        assert_eq!(e.output(), "tiếng");
+        e.remove_last_output_char();
+        assert_eq!(e.output(), "tiến");
+
+        // Same shape with plain `e`: `tiéng` -> `tién`.
+        e.reset();
+        e.process_str("tiengs", Mode::Vietnamese);
+        assert_eq!(e.output(), "tiéng");
+        e.remove_last_output_char();
+        assert_eq!(e.output(), "tién");
+
+        // `việt` -> drops `t`, keeps ê mark and nặng tone.
+        e.reset();
+        e.process_str("vietej", Mode::Vietnamese);
+        assert_eq!(e.output(), "việt");
+        e.remove_last_output_char();
+        assert_eq!(e.output(), "việ");
+
+        // Tone targets the last grapheme: both are dropped.
+        e.reset();
+        e.process_str("baf", Mode::Vietnamese);
+        assert_eq!(e.output(), "bà");
+        e.remove_last_output_char();
+        assert_eq!(e.output(), "b");
+
+        // Doubled letters: `â` -> `""`.
+        e.reset();
+        e.process_str("aa", Mode::Vietnamese);
+        assert_eq!(e.output(), "â");
+        e.remove_last_output_char();
+        assert_eq!(e.output(), "");
+
+        // `đ` -> `""`.
+        e.reset();
+        e.process_str("dd", Mode::Vietnamese);
+        assert_eq!(e.output(), "đ");
+        e.remove_last_output_char();
+        assert_eq!(e.output(), "");
+
+        // Tone typed early: still drops `g`, keeps tone.
+        e.reset();
+        e.process_str("tieesng", Mode::Vietnamese);
+        assert_eq!(e.output(), "tiếng");
+        e.remove_last_output_char();
+        assert_eq!(e.output(), "tiến");
+
+        // Empty composition: no-op.
+        e.reset();
+        e.remove_last_output_char();
+        assert_eq!(e.output(), "");
+    }
+
+    #[test]
+    fn remove_last_output_char_vni() {
+        let mut e = Engine::new(InputMethod::vni());
+
+        // `việt` -> `việ`.
+        e.process_str("viet65", Mode::Vietnamese);
+        assert_eq!(e.output(), "việt");
+        e.remove_last_output_char();
+        assert_eq!(e.output(), "việ");
+
+        // `bà` -> `b`.
+        e.reset();
+        e.process_str("ba2", Mode::Vietnamese);
+        assert_eq!(e.output(), "bà");
+        e.remove_last_output_char();
+        assert_eq!(e.output(), "b");
+    }
+
+    #[test]
+    fn remove_last_output_char_invalidates_snapshots() {
+        let mut e = Engine::new(InputMethod::telex());
+
+        e.process_str("tiếng", Mode::Vietnamese);
+        e.remove_last_output_char();
+        assert_eq!(e.output(), "tiến");
+
+        // remove_last_char must not "undo" past the grapheme delete to a stale snapshot.
+        e.remove_last_char(true);
+        assert_eq!(e.output(), "tiến");
+    }
+
+    #[test]
+    fn compose_after_remove_last_output_char() {
+        let mut e = Engine::new(InputMethod::telex());
+
+        // `toàn`: the huyền tone targets the vowel `a`, not the final consonant `n`,
+        // so deleting `n` keeps the tone: `toàn` -> `tòa`.
+        e.process_str("toanf", Mode::Vietnamese);
+        assert_eq!(e.output(), "toàn");
+        e.remove_last_output_char();
+        assert_eq!(e.output(), "tòa");
+
+        // The engine must accept keystrokes normally after compaction:
+        // re-typing the deleted consonant and the tone key recomposes the word.
+        e.process_key('n', Mode::Vietnamese);
+        e.process_key('f', Mode::Vietnamese);
+        assert_eq!(e.output(), "toàn");
+
+        // And keep composing fresh words after a commit.
+        e.process_key(' ', Mode::Vietnamese);
+        e.process_key('a', Mode::Vietnamese);
+        e.process_key('n', Mode::Vietnamese);
+        e.process_key('h', Mode::Vietnamese);
+        assert_eq!(e.output(), "anh");
+    }
+
+    #[test]
+    fn remove_last_output_char_double_delete() {
+        let mut e = Engine::new(InputMethod::telex());
+
+        // Stress-test compaction on an already-compacted buffer.
+        e.process_str("tieesng", Mode::Vietnamese);
+        assert_eq!(e.output(), "tiếng");
+        e.remove_last_output_char();
+        assert_eq!(e.output(), "tiến");
+        e.remove_last_output_char();
+        assert_eq!(e.output(), "tiế");
+
+        // Deleting past the end is a no-op.
+        e.reset();
+        e.process_str("baf", Mode::Vietnamese);
+        assert_eq!(e.output(), "bà");
+        e.remove_last_output_char();
+        assert_eq!(e.output(), "b");
+        e.remove_last_output_char();
+        assert_eq!(e.output(), "");
+        e.remove_last_output_char();
+        assert_eq!(e.output(), "");
     }
 }

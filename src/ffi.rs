@@ -3,6 +3,11 @@
 //! This module provides an `extern "C"` API for integrating Bamboo with
 //! other languages like C, C++, Python, and IME frameworks (Fcitx5, IBus).
 
+// Unsafe extern "C" fns operate on raw pointers validated by the caller; the
+// bodies dereference them directly without per-op unsafe blocks (edition 2024
+// would otherwise flag each deref).
+#![allow(unsafe_op_in_unsafe_fn)]
+
 use std::ffi::CString;
 use std::os::raw::c_char;
 use std::ptr;
@@ -118,9 +123,9 @@ pub unsafe extern "C" fn bamboo_process_key_buf(
         return -1;
     }
 
-    let out_len = unsafe { &mut *out_len };
-    let backspaces_chars = unsafe { &mut *backspaces_chars };
-    let backspaces_bytes = unsafe { &mut *backspaces_bytes };
+    let out_len = &mut *out_len;
+    let backspaces_chars = &mut *backspaces_chars;
+    let backspaces_bytes = &mut *backspaces_bytes;
 
     let mode = if is_vietnamese != 0 { Mode::Vietnamese } else { Mode::English };
 
@@ -154,9 +159,7 @@ pub unsafe extern "C" fn bamboo_process_key_buf(
         if out_buf.is_null() {
             return -1;
         }
-        unsafe {
-            ptr::copy_nonoverlapping(bytes.as_ptr(), out_buf, bytes.len());
-        }
+        ptr::copy_nonoverlapping(bytes.as_ptr(), out_buf, bytes.len());
     }
 
     0
@@ -190,9 +193,7 @@ pub extern "C" fn bamboo_remove_last_char() {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn bamboo_free_string(s: *mut c_char) {
     if !s.is_null() {
-        unsafe {
-            let _ = CString::from_raw(s);
-        }
+        let _ = CString::from_raw(s);
     }
 }
 
@@ -229,9 +230,7 @@ pub extern "C" fn bamboo_engine_new(method: i32) -> *mut BambooEngine {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn bamboo_engine_free(engine: *mut BambooEngine) {
     if !engine.is_null() {
-        unsafe {
-            let _ = Box::from_raw(engine);
-        }
+        let _ = Box::from_raw(engine);
     }
 }
 
@@ -245,12 +244,27 @@ pub unsafe extern "C" fn bamboo_engine_process(engine: *mut BambooEngine, key: u
     if engine.is_null() {
         return ptr::null_mut();
     }
-    let e = unsafe { &mut *engine };
+    let e = &mut *engine;
     if let Some(c) = std::char::from_u32(key) {
         e.process_key(c, Mode::Vietnamese);
     }
     let out = e.output();
     CString::new(out).unwrap_or_default().into_raw()
+}
+
+/// Removes the last output character (grapheme) from the active composition
+/// using a specific engine instance, keeping mark/tone transformations on
+/// earlier characters intact.
+///
+/// # Safety
+/// - `engine` must be a valid, non-null pointer to a `BambooEngine` instance.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn bamboo_engine_remove_last_output_char(engine: *mut BambooEngine) {
+    if engine.is_null() {
+        return;
+    }
+    let e = &mut *engine;
+    e.remove_last_output_char();
 }
 
 /// Instance-based variant of [`bamboo_process_key_buf`].
@@ -277,13 +291,13 @@ pub unsafe extern "C" fn bamboo_engine_process_key_buf(
         return -1;
     }
 
-    let out_len = unsafe { &mut *out_len };
-    let backspaces_chars = unsafe { &mut *backspaces_chars };
-    let backspaces_bytes = unsafe { &mut *backspaces_bytes };
+    let out_len = &mut *out_len;
+    let backspaces_chars = &mut *backspaces_chars;
+    let backspaces_bytes = &mut *backspaces_bytes;
 
     let mode = if is_vietnamese != 0 { Mode::Vietnamese } else { Mode::English };
 
-    let e = unsafe { &mut *engine };
+    let e = &mut *engine;
     let Some(c) = std::char::from_u32(key) else {
         *out_len = 0;
         *backspaces_chars = 0;
@@ -305,9 +319,7 @@ pub unsafe extern "C" fn bamboo_engine_process_key_buf(
         if out_buf.is_null() {
             return -1;
         }
-        unsafe {
-            ptr::copy_nonoverlapping(bytes.as_ptr(), out_buf, bytes.len());
-        }
+        ptr::copy_nonoverlapping(bytes.as_ptr(), out_buf, bytes.len());
     }
 
     0

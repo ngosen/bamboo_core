@@ -14,6 +14,7 @@
 //! | [`Engine::process`] | Convenience | Process a full string, return output |
 //! | [`Engine::output`] | Read state | Get current composing word as `String` |
 //! | [`Engine::remove_last_char`] | Backspace | Undo last keystroke (O(1) via snapshot stack) |
+//! | [`Engine::remove_last_output_char`] | Backspace | Remove last output grapheme, keeping mark/tone on earlier chars |
 //! | [`Engine::commit`] | Confirm word | Finalize composing word into committed text |
 //! | [`Engine::reset`] | New session | Clear all state |
 //!
@@ -84,6 +85,21 @@
 //!
 //! engine.remove_last_char(true);
 //! assert_eq!(engine.output(), "chuyên");
+//! ```
+//!
+//! For a Vietnamese backspace setting that deletes the **whole preceding character**
+//! (drops `g` while keeping the `ế` in `tiếng` -> `tiến`), use
+//! [`Engine::remove_last_output_char`]:
+//!
+//! ```rust
+//! use bamboo_core::{Engine, Mode, InputMethod};
+//!
+//! let mut engine = Engine::new(InputMethod::telex());
+//! engine.process_str("tieesng", Mode::Vietnamese);
+//! assert_eq!(engine.output(), "tiếng");
+//!
+//! engine.remove_last_output_char();
+//! assert_eq!(engine.output(), "tiến");
 //! ```
 //!
 //! ## Output Customization
