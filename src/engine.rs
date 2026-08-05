@@ -969,4 +969,53 @@ mod tests {
         e.remove_last_char(true);
         assert_eq!(e.output(), "tiến");
     }
+
+    #[test]
+    fn compose_after_remove_last_output_char() {
+        let mut e = Engine::new(InputMethod::telex());
+
+        // `toàn`: the huyền tone targets the vowel `a`, not the final consonant `n`,
+        // so deleting `n` keeps the tone: `toàn` -> `tòa`.
+        e.process_str("toanf", Mode::Vietnamese);
+        assert_eq!(e.output(), "toàn");
+        e.remove_last_output_char();
+        assert_eq!(e.output(), "tòa");
+
+        // The engine must accept keystrokes normally after compaction:
+        // re-typing the deleted consonant and the tone key recomposes the word.
+        e.process_key('n', Mode::Vietnamese);
+        e.process_key('f', Mode::Vietnamese);
+        assert_eq!(e.output(), "toàn");
+
+        // And keep composing fresh words after a commit.
+        e.process_key(' ', Mode::Vietnamese);
+        e.process_key('a', Mode::Vietnamese);
+        e.process_key('n', Mode::Vietnamese);
+        e.process_key('h', Mode::Vietnamese);
+        assert_eq!(e.output(), "anh");
+    }
+
+    #[test]
+    fn remove_last_output_char_double_delete() {
+        let mut e = Engine::new(InputMethod::telex());
+
+        // Stress-test compaction on an already-compacted buffer.
+        e.process_str("tieesng", Mode::Vietnamese);
+        assert_eq!(e.output(), "tiếng");
+        e.remove_last_output_char();
+        assert_eq!(e.output(), "tiến");
+        e.remove_last_output_char();
+        assert_eq!(e.output(), "tiế");
+
+        // Deleting past the end is a no-op.
+        e.reset();
+        e.process_str("baf", Mode::Vietnamese);
+        assert_eq!(e.output(), "bà");
+        e.remove_last_output_char();
+        assert_eq!(e.output(), "b");
+        e.remove_last_output_char();
+        assert_eq!(e.output(), "");
+        e.remove_last_output_char();
+        assert_eq!(e.output(), "");
+    }
 }
