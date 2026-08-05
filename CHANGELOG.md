@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.13] - 2026-08-05
+
+### Added
+- **`Engine::remove_last_output_char()`** — grapheme-level backspace: deletes the entire output character before the caret, keeping mark/tone transformations on earlier characters. Unlike `remove_last_char` (which undoes keystrokes one at a time via snapshot stack), this removes the whole grapheme in a single operation.
+- **FFI export:** `bamboo_engine_remove_last_output_char(engine)` for C consumers.
+
+### Internal
+- Dropped redundant `unsafe` blocks in FFI module via module-level `#[allow(unused_unsafe)]`.
+
 ## [0.3.12] - 2026-07-12
 
 ### Performance
