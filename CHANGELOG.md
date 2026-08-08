@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.17] - 2026-08-09
+
+### Performance
+- **Compact DFA State (520 → 92 bytes):** Replaced `[u32; 128]` transitions with sorted `[(u8, u32); 24]` + 128-bit bitset. State size reduced 5.7×, improving CPU cache utilization for ~4,200 DFA states.
+- **Hash cache:** Added `comp_hash` field to State, replaced `composition_to_state: FxHashMap<Box<[T]>, u32>` with `hash_to_state: FxHashMap<u64, u32>`. Eliminates ~4,200 Box heap allocations.
+- **`generate_transformations` zero-alloc:** Replaced `flatten_slice` + string search with direct composition scan (`contains_uho_in_composition`). Eliminates 1 String allocation per slow-path keystroke.
+- **Byte-level `lcp_chars_and_bytes`:** Replaced `chars().zip()` with byte-level comparison for delta API. Avoids per-char UTF-8 decoding.
+- **`copy_from_slice` in backspace:** Replaced per-element loop with memcpy for tone refresh in `remove_last_char` and `remove_last_output_char`.
+
+### Changed
+- `input_method()` now returns `&InputMethod` instead of cloning.
+- `to_flags()`, `from_flags()`, `Config::new()` are now `const fn`.
+- All clippy warnings resolved (0 warnings).
+- Iterator patterns: `.iter().all()`, `.position()`, `.find()`, `.zip().all()`, `.is_some_and()`, `.map_or()` throughout.
+
+### Memory
+- `Engine::new()`: 98 KB → 61 KB (1.6× smaller)
+- `warm_up()`: 11.4 MB → 5.7 MB (2.0×), allocs 9,316 → 1,164 (8× fewer)
+- 10K Vietnamese sentences: 8.1 MB → 5.6 MB (1.4×)
+
 ## [0.3.16] - 2026-08-09
 
 ### Performance
