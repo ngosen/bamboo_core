@@ -23,6 +23,17 @@ pub(crate) fn flatten_slice_into(
     write_canvas_slice(composition, options, out);
 }
 
+/// Appends the flattened composition to an existing string buffer without clearing it.
+/// Used by `commit()` to avoid allocating a temporary String.
+pub(crate) fn append_flatten_slice(
+    composition: &[Transformation],
+    options: OutputOptions,
+    out: &mut String,
+) {
+    out.reserve(estimate_cap_bytes_slice(composition, options));
+    write_canvas_slice(composition, options, out);
+}
+
 #[inline]
 fn estimate_cap_bytes_slice(composition: &[Transformation], options: OutputOptions) -> usize {
     let char_count = if options.contains(OutputOptions::RAW) {

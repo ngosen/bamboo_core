@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.16] - 2026-08-09
+
+### Performance
+- **`commit()` zero-heap:** Eliminated temporary `String` allocation in `commit()`. Now writes flattened output directly into `committed_text` via `append_flatten_slice()`. Result: 10K Vietnamese sentences — allocs reduced from 229,306 → 306 (**756× fewer**), heap from 9.9 MB → 8.1 MB. 10K English — allocs from 260,026 → 27.
+- **`compile_common()` zero-heap:** Replaced `String::with_capacity(8)` per syllable with stack-allocated `[u8; 8]` buffer. warm_up() allocations reduced from 13,366 → 9,316 (**4,050 fewer**).
+- **`get_processed_str()` no-clone fast path:** When `active` is empty and `FULL_TEXT` is set, returns `committed_text.clone()` directly instead of cloning + appending empty string.
+
+### Internal
+- Added `flattener::append_flatten_slice()` — appends to existing String without clearing.
+
 ## [0.3.15] - 2026-08-09
 
 ### Docs

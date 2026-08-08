@@ -1,6 +1,6 @@
 [package]
 name = "bamboo-core"
-version = "0.3.15"
+version = "0.3.16"
 edition = "2024"
 
 description = "Vietnamese input method engine written in Rust"
@@ -41,6 +41,10 @@ harness = false
 
 [[bench]]
 name = "memory_profile"
+harness = false
+
+[[bench]]
+name = "dfa_misspell_test"
 harness = false
 
 [dev-dependencies]

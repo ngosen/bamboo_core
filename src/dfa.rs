@@ -118,14 +118,18 @@ impl<'a> DfaCompiler<'a> {
         ];
         let tones = ["", "s", "f", "r", "x", "j"];
 
+        // Stack-allocated buffer: max prefix "ngh" (3) + max vowel "uay" (3) + tone (1) = 7
+        let mut buf = [0u8; 8];
         for &f in &fc {
             for &v in &vowels {
                 for &t in &tones {
-                    let mut seq = String::with_capacity(8);
-                    seq.push_str(f);
-                    seq.push_str(v);
-                    seq.push_str(t);
-                    self.simulate_str(&seq);
+                    let mut pos = 0;
+                    for &b in f.as_bytes() { buf[pos] = b; pos += 1; }
+                    for &b in v.as_bytes() { buf[pos] = b; pos += 1; }
+                    for &b in t.as_bytes() { buf[pos] = b; pos += 1; }
+                    // SAFETY: all parts are ASCII
+                    let seq = unsafe { std::str::from_utf8_unchecked(&buf[..pos]) };
+                    self.simulate_str(seq);
                 }
             }
         }

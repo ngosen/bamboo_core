@@ -480,13 +480,417 @@ fn test_realistic_session() {
 }
 
 // ===========================================================================
+// Test 10: EXTREME — 10,000 Vietnamese sentences (gõ cực lâu)
+// ===========================================================================
+
+fn test_extreme_vietnamese() {
+    println!("=== 10. EXTREME Vietnamese — 10,000 sentences ===");
+
+    let sentences = [
+        "hom nay troij depf qua, toi di choiwj voiwf banj bef.",
+        "tiengf vietj ratj depf va phuwf tapj, canf phaij hocj nhieeuf.",
+        "chao mowf banf ddenf vieetj namf, quoocs depf lamf.",
+        "tuoif treo hom nayf hocj ratj chams va nghifeng tueej.",
+        "duownjg nhuw laajf nguwowif nha dangf nauw anwj.",
+        "buwows saungf hom nayf troijf ratj depf, khongf cooj muaaj.",
+        "anhf ayf laf mojt nguwowif totj buojngf, luoonf giuwp doj moiwf nguowif.",
+        "truwowjt khi di nguwr, toi thuwowngf doocj sajspj motf cuoons sajspj.",
+        "nguwowif vietj namf tuowngf tuwf ratj caof, khongf soj gianj nanf.",
+        "moij ngayf toi ddayf tuowfj lucj 6 gioof sangf deej tapj theer ducj.",
+    ];
+
+    reset_counters();
+    let mut e = Engine::new(InputMethod::telex());
+    e.warm_up();
+    let after_warmup = snapshot();
+
+    // Track DFA growth at intervals
+    let checkpoints = [100, 500, 1000, 2000, 5000, 10000];
+    println!(
+        "{:<12} {:>12} {:>12} {:>12} {:>12} {:>15}",
+        "Sentences", "Heap alloc", "Net RAM", "DFA states", "DFA arena", "committed_text"
+    );
+    println!("{}", "-".repeat(80));
+
+    for i in 0..10000 {
+        let s = sentences[i % sentences.len()];
+        e.process_str(s, Mode::Vietnamese);
+        e.process_key(' ', Mode::Vietnamese);
+        e.commit();
+
+        if checkpoints.contains(&(i + 1)) {
+            let now = snapshot();
+            let heap = now.0 as isize - after_warmup.0 as isize;
+            let text = e.get_processed_str(bamboo_core::OutputOptions::FULL_TEXT);
+            println!(
+                "{:<12} {:>12} {:>12} {:>12} {:>12} {:>15}",
+                i + 1,
+                format_bytes(heap.max(0) as usize),
+                format_bytes(text.len()),
+                e.dfa_state_count(),
+                e.dfa_arena_len(),
+                format_bytes(e.committed_text_capacity())
+            );
+        }
+    }
+
+    let after = snapshot();
+    let total_heap = after.0 as isize - after_warmup.0 as isize;
+    let total_allocs = after.2 - after_warmup.2;
+    let text = e.get_processed_str(bamboo_core::OutputOptions::FULL_TEXT);
+
+    println!("{}", "-".repeat(80));
+    println!(
+        "  FINAL:     heap={:>10}, allocs={}, dfa_states={}, text={}",
+        format_bytes(total_heap.max(0) as usize),
+        total_allocs,
+        e.dfa_state_count(),
+        format_bytes(text.len())
+    );
+    println!();
+
+    // Compare with skey
+    reset_counters();
+    let s = SkeyEngine::new(Method::Telex);
+    let before = snapshot();
+
+    let mut total_output = String::new();
+    for i in 0..10000 {
+        let result = s.transform(sentences[i % sentences.len()]);
+        total_output.push_str(&result);
+        total_output.push(' ');
+    }
+
+    let after = snapshot();
+    let skey_heap = after.0 as isize - before.0 as isize;
+    println!(
+        "  skey 10K:  heap={:>10}, allocs={}, text={}",
+        format_bytes(skey_heap.max(0) as usize),
+        after.2 - before.2,
+        format_bytes(total_output.len())
+    );
+    println!();
+}
+
+// ===========================================================================
+// Test 11: EXTREME — 10,000 English sentences (pure ASCII, no DFA growth)
+// ===========================================================================
+
+fn test_extreme_english() {
+    println!("=== 11. EXTREME English — 10,000 sentences ===");
+
+    let sentences = [
+        "The quick brown fox jumps over the lazy dog.",
+        "Lorem ipsum dolor sit amet, consectetur adipiscing elit.",
+        "fn main() { println!(\"Hello, world!\"); }",
+        "let mut count = 0; for i in 0..100 { count += i; }",
+        "const MAX_BUFFER_SIZE: usize = 4096;",
+        "use std::collections::HashMap;",
+        "impl Display for MyStruct { fn fmt(&self, f: &mut Formatter) -> Result { ... } }",
+        "async fn fetch_data(url: &str) -> Result<String, Error> { ... }",
+        "struct Config { host: String, port: u16, debug: bool }",
+        "match self.state { State::Running => continue, State::Stopped => break }",
+    ];
+
+    reset_counters();
+    let mut e = Engine::new(InputMethod::telex());
+    e.warm_up();
+    let after_warmup = snapshot();
+
+    let checkpoints = [100, 500, 1000, 2000, 5000, 10000];
+    println!(
+        "{:<12} {:>12} {:>12} {:>12} {:>15}",
+        "Sentences", "Heap alloc", "DFA states", "DFA arena", "committed_text"
+    );
+    println!("{}", "-".repeat(70));
+
+    for i in 0..10000 {
+        let s = sentences[i % sentences.len()];
+        e.process_str(s, Mode::English);
+        e.process_key('\n', Mode::English);
+        e.commit();
+
+        if checkpoints.contains(&(i + 1)) {
+            let now = snapshot();
+            let heap = now.0 as isize - after_warmup.0 as isize;
+            println!(
+                "{:<12} {:>12} {:>12} {:>12} {:>15}",
+                i + 1,
+                format_bytes(heap.max(0) as usize),
+                e.dfa_state_count(),
+                e.dfa_arena_len(),
+                format_bytes(e.committed_text_capacity())
+            );
+        }
+    }
+
+    let after = snapshot();
+    let total_heap = after.0 as isize - after_warmup.0 as isize;
+    let total_allocs = after.2 - after_warmup.2;
+    let text = e.get_processed_str(bamboo_core::OutputOptions::FULL_TEXT);
+
+    println!("{}", "-".repeat(70));
+    println!(
+        "  FINAL:     heap={:>10}, allocs={}, dfa_states={}, text={}",
+        format_bytes(total_heap.max(0) as usize),
+        total_allocs,
+        e.dfa_state_count(),
+        format_bytes(text.len())
+    );
+    println!();
+
+    // Compare with skey
+    reset_counters();
+    let s = SkeyEngine::new(Method::Telex);
+    let before = snapshot();
+
+    let mut total_output = String::new();
+    for i in 0..10000 {
+        let result = s.transform(sentences[i % sentences.len()]);
+        total_output.push_str(&result);
+        total_output.push('\n');
+    }
+
+    let after = snapshot();
+    let skey_heap = after.0 as isize - before.0 as isize;
+    println!(
+        "  skey 10K:  heap={:>10}, allocs={}, text={}",
+        format_bytes(skey_heap.max(0) as usize),
+        after.2 - before.2,
+        format_bytes(total_output.len())
+    );
+    println!();
+}
+
+// ===========================================================================
+// Test 12: EXTREME — Mixed VI + EN (realistic user session)
+// ===========================================================================
+
+fn test_extreme_mixed() {
+    println!("=== 12. EXTREME Mixed VI+EN — 10,000 messages ===");
+
+    let messages = [
+        ("vi", "hom nay toi hoc lapj trinhr, ratj hayf."),
+        ("en", "fn main() { let x = 42; }"),
+        ("vi", "tiengf vietj depf qua, toi thifcj thuwf hocj."),
+        ("en", "use bamboo_core::{Engine, Mode, InputMethod};"),
+        ("vi", "chao mowf banf, banf tenw giw?"),
+        ("en", "let mut engine = Engine::new(InputMethod::telex());"),
+        ("vi", "nguwowif vietj namf tuowngf tuwf ratj caof."),
+        ("en", "async fn process(input: &str) -> Result<String> { ... }"),
+        ("vi", "moij ngayf toi ddayf tuowfj lucj 6 gioof sangf."),
+        ("en", "const MAX_LEN: usize = 1024;"),
+        ("vi", "troiwf hom nayf depf lamf, khongf cooj muaaj."),
+        ("en", "struct Database { pool: Pool, config: Config }"),
+        ("vi", "toi dangf hocj ngon nguwr Rust, ratj thuwcj thuwfj."),
+        ("en", "match self.status { Ok(v) => v, Err(e) => return Err(e) }"),
+        ("vi", "buwows saungf hom nayf troijf ratj depf."),
+        ("en", "impl Iterator for MyIter { type Item = u32; }"),
+        ("vi", "duownjg nhuw laajf nguwowif nha dangf nauw anwj."),
+        ("en", "fn fmt(&self, f: &mut Formatter) -> fmt::Result { ... }"),
+        ("vi", "anhf ayf laf mojt nguwowif totj buojngf."),
+        ("en", "pub fn new() -> Self { Self { data: Vec::new() } }"),
+    ];
+
+    reset_counters();
+    let mut e = Engine::new(InputMethod::telex());
+    e.warm_up();
+    let after_warmup = snapshot();
+
+    let checkpoints = [100, 500, 1000, 2000, 5000, 10000];
+    println!(
+        "{:<12} {:>12} {:>12} {:>12} {:>15}",
+        "Messages", "Heap alloc", "DFA states", "DFA arena", "committed_text"
+    );
+    println!("{}", "-".repeat(70));
+
+    for i in 0..10000 {
+        let (mode, msg) = messages[i % messages.len()];
+        let m = if mode == "vi" { Mode::Vietnamese } else { Mode::English };
+        e.process_str(msg, m);
+        e.process_key('\n', m);
+        e.commit();
+
+        if checkpoints.contains(&(i + 1)) {
+            let now = snapshot();
+            let heap = now.0 as isize - after_warmup.0 as isize;
+            println!(
+                "{:<12} {:>12} {:>12} {:>12} {:>15}",
+                i + 1,
+                format_bytes(heap.max(0) as usize),
+                e.dfa_state_count(),
+                e.dfa_arena_len(),
+                format_bytes(e.committed_text_capacity())
+            );
+        }
+    }
+
+    let after = snapshot();
+    let total_heap = after.0 as isize - after_warmup.0 as isize;
+    let total_allocs = after.2 - after_warmup.2;
+    let text = e.get_processed_str(bamboo_core::OutputOptions::FULL_TEXT);
+
+    println!("{}", "-".repeat(70));
+    println!(
+        "  FINAL:     heap={:>10}, allocs={}, dfa_states={}, text={}",
+        format_bytes(total_heap.max(0) as usize),
+        total_allocs,
+        e.dfa_state_count(),
+        format_bytes(text.len())
+    );
+    println!();
+
+    // Compare with skey
+    reset_counters();
+    let s = SkeyEngine::new(Method::Telex);
+    let before = snapshot();
+
+    let mut total_output = String::new();
+    for i in 0..10000 {
+        let (mode, msg) = messages[i % messages.len()];
+        if mode == "vi" {
+            total_output.push_str(&s.transform(msg));
+        } else {
+            total_output.push_str(msg);
+        }
+        total_output.push('\n');
+    }
+
+    let after = snapshot();
+    let skey_heap = after.0 as isize - before.0 as isize;
+    println!(
+        "  skey 10K:  heap={:>10}, allocs={}, text={}",
+        format_bytes(skey_heap.max(0) as usize),
+        after.2 - before.2,
+        format_bytes(total_output.len())
+    );
+    println!();
+}
+
+// ===========================================================================
+// Test 13: DFA saturation — does DFA stop growing?
+// ===========================================================================
+
+fn test_dfa_saturation() {
+    println!("=== 13. DFA saturation — 50,000 unique Vietnamese words ===");
+
+    // Generate 50,000 unique syllable combinations
+    let mut words = Vec::new();
+    let prefixes = ["", "b", "c", "ch", "d", "g", "h", "k", "kh", "l", "m", "n", "ng", "ngh", "nh", "p", "ph", "q", "r", "s", "t", "th", "tr", "v", "x"];
+    let vowels = ["a", "e", "i", "o", "u", "aa", "ee", "oo", "aw", "ow", "uw", "ai", "ao", "au", "ay", "ie", "oa", "oe", "oi", "ua", "ue", "ui", "uo", "uy"];
+    let tones = ["", "s", "f", "r", "x", "j"];
+
+    for p in &prefixes {
+        for v in &vowels {
+            for t in tones {
+                words.push(format!("{}{}{}", p, v, t));
+            }
+        }
+    }
+
+    println!("  Generated {} unique syllable combinations", words.len());
+
+    reset_counters();
+    let mut e = Engine::new(InputMethod::telex());
+    e.warm_up();
+    let after_warmup = snapshot();
+
+    let checkpoints = [1000, 5000, 10000, 20000, 30000, 40000, 50000];
+    println!(
+        "{:<12} {:>12} {:>12} {:>15} {:>15}",
+        "Words", "Heap alloc", "DFA states", "DFA arena (B)", "DFA comp_map"
+    );
+    println!("{}", "-".repeat(70));
+
+    for (i, w) in words.iter().enumerate() {
+        e.process_str(w, Mode::Vietnamese);
+        e.process_key(' ', Mode::Vietnamese);
+        e.commit();
+
+        if checkpoints.contains(&(i + 1)) {
+            let now = snapshot();
+            let heap = now.0 as isize - after_warmup.0 as isize;
+            let arena_bytes = e.dfa_arena_len() * std::mem::size_of::<bamboo_core::Transformation>();
+            println!(
+                "{:<12} {:>12} {:>12} {:>15} {:>15}",
+                i + 1,
+                format_bytes(heap.max(0) as usize),
+                e.dfa_state_count(),
+                format_bytes(arena_bytes),
+                e.dfa_composition_count()
+            );
+        }
+    }
+
+    let after = snapshot();
+    let total_heap = after.0 as isize - after_warmup.0 as isize;
+    let arena_bytes = e.dfa_arena_len() * std::mem::size_of::<bamboo_core::Transformation>();
+
+    println!("{}", "-".repeat(70));
+    println!(
+        "  FINAL: heap={:>10}, dfa_states={}, dfa_arena={}, comp_map={}",
+        format_bytes(total_heap.max(0) as usize),
+        e.dfa_state_count(),
+        format_bytes(arena_bytes),
+        e.dfa_composition_count()
+    );
+    println!();
+}
+
+// ===========================================================================
+// Test 14: Sustained typing — no commit, watch active_buffer + DFA
+// ===========================================================================
+
+fn test_sustained_no_commit() {
+    println!("=== 14. Sustained typing — no commit, single long word ===");
+
+    // Type a very long "word" (no spaces, no commit) to test active_buffer behavior
+    let long_input = "tieengsvietjhuowngquoocsnguwowifnamfchuyeennthuyeetruw\
+                      owjtnghieengshoaskhongfduowcjnhuwngfmoiwlaajtuoiftroiwf\
+                      doocsmuawsphujquyfnguxhoaxbuwowsngoiflamfanhfbuocjduownjg";
+
+    reset_counters();
+    let mut e = Engine::new(InputMethod::telex());
+    e.warm_up();
+    let after_warmup = snapshot();
+
+    // Type character by character, track growth
+    let chars: Vec<char> = long_input.chars().collect();
+    let checkpoints = [10, 50, 100, 200, 300, 500, chars.len()];
+
+    println!(
+        "{:<12} {:>12} {:>12} {:>12} {:>12}",
+        "Chars typed", "Heap alloc", "DFA states", "Active len", "Snapshot len"
+    );
+    println!("{}", "-".repeat(65));
+
+    for (i, &c) in chars.iter().enumerate() {
+        e.process_key(c, Mode::Vietnamese);
+
+        if checkpoints.contains(&(i + 1)) || i + 1 == chars.len() {
+            let now = snapshot();
+            let heap = now.0 as isize - after_warmup.0 as isize;
+            println!(
+                "{:<12} {:>12} {:>12} {:>12} {:>12}",
+                i + 1,
+                format_bytes(heap.max(0) as usize),
+                e.dfa_state_count(),
+                e.active_len(),
+                e.snapshot_len()
+            );
+        }
+    }
+    println!();
+}
+
+// ===========================================================================
 // Main
 // ===========================================================================
 
 fn main() {
-    println!("╔══════════════════════════════════════════════════════════════════╗");
-    println!("║        Bamboo-core vs Skey-engine — RAM & Memory Profiling     ║");
-    println!("╚══════════════════════════════════════════════════════════════════╝");
+    println!("╔══════════════════════════════════════════════════════════════════════╗");
+    println!("║     Bamboo-core vs Skey-engine — RAM & Memory Profiling (EXTREME)  ║");
+    println!("╚══════════════════════════════════════════════════════════════════════╝");
     println!();
 
     test_struct_sizes();
@@ -498,8 +902,13 @@ fn main() {
     test_skey_memory();
     test_uppercase_dfa_bypass();
     test_realistic_session();
+    test_extreme_vietnamese();
+    test_extreme_english();
+    test_extreme_mixed();
+    test_dfa_saturation();
+    test_sustained_no_commit();
 
-    println!("╔══════════════════════════════════════════════════════════════════╗");
-    println!("║                        Profiling Complete                      ║");
-    println!("╚══════════════════════════════════════════════════════════════════╝");
+    println!("╔══════════════════════════════════════════════════════════════════════╗");
+    println!("║                          Profiling Complete                        ║");
+    println!("╚══════════════════════════════════════════════════════════════════════╝");
 }

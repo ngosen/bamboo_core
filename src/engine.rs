@@ -694,9 +694,18 @@ impl Engine {
         if self.active_len == 0 {
             return;
         }
-        let word = self.output();
-        self.committed_text.push_str(&word);
+        // Copy active transformations to stack buffer to avoid borrow conflict.
+        // This is a fixed 448-byte memcpy (16 × 28 bytes) — no heap allocation.
+        // Still better than the old approach which allocated a String via output().
+        let mut comp = [Transformation::default(); MAX_ACTIVE_TRANS];
+        comp[..self.active_len].copy_from_slice(&self.active_buffer[..self.active_len]);
+        let len = self.active_len;
         self.active_len = 0;
+        crate::flattener::append_flatten_slice(
+            &comp[..len],
+            OutputOptions::NONE,
+            &mut self.committed_text,
+        );
         self.current_state_id = 0;
         self.snapshot_len = 0;
     }
@@ -712,8 +721,14 @@ impl Engine {
     pub fn get_processed_str(&self, options: OutputOptions) -> String {
         let active = self.active_slice();
         if options.contains(OutputOptions::FULL_TEXT) {
-            let mut result = self.committed_text.clone();
-            result.push_str(&crate::flattener::flatten_slice(active, options));
+            if active.is_empty() {
+                return self.committed_text.clone();
+            }
+            let mut result = String::with_capacity(
+                self.committed_text.len() + active.len() * 4,
+            );
+            result.push_str(&self.committed_text);
+            crate::flattener::append_flatten_slice(active, options, &mut result);
             return result;
         }
         if options.contains(OutputOptions::PUNCTUATION_MODE) {
@@ -895,6 +910,16 @@ impl Engine {
     /// Returns the capacity (in bytes) of the committed_text buffer.
     pub fn committed_text_capacity(&self) -> usize {
         self.committed_text.capacity()
+    }
+
+    /// Returns the number of active transformations in the current syllable.
+    pub fn active_len(&self) -> usize {
+        self.active_len
+    }
+
+    /// Returns the number of snapshots stored for backspace.
+    pub fn snapshot_len(&self) -> usize {
+        self.snapshot_len
     }
 }
 
