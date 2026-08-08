@@ -602,7 +602,7 @@ impl Engine {
         // Uses lowercase key for DFA lookup — uppercase shares the same DFA cache.
         if lower_key.is_ascii() {
             let next_state_id =
-                self.dfa.get_state(self.current_state_id).transitions[lower_key as usize];
+                self.dfa.get_state(self.current_state_id).get_transition(lower_key as u8);
             if next_state_id != 0 {
                 // Snapshot before overwriting active buffer (skip if empty — nothing to restore).
                 if self.active_len > 0 {
@@ -666,8 +666,7 @@ impl Engine {
                 work.as_slice()
             };
             let next_id = self.dfa.add_state(cache_comp);
-            self.dfa.states[self.current_state_id as usize].transitions[lower_key as usize] =
-                next_id;
+            self.dfa.states[self.current_state_id as usize].set_transition(lower_key as u8, next_id);
             self.current_state_id = next_id;
         } else {
             self.current_state_id = self.dfa.find_state(work.as_slice()).unwrap_or(0);
@@ -904,7 +903,7 @@ impl Engine {
 
     /// Returns the number of entries in the DFA composition-to-state map.
     pub fn dfa_composition_count(&self) -> usize {
-        self.dfa.composition_to_state.len()
+        self.dfa.hash_to_state.len()
     }
 
     /// Returns the capacity (in bytes) of the committed_text buffer.
