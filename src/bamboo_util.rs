@@ -15,7 +15,7 @@ pub(crate) const EFREE_TONE_MARKING: u32 = 1 << 0;
 pub(crate) const ESTD_TONE_STYLE: u32 = 1 << 1;
 
 fn in_key_list(keys: Option<&[char]>, key: char) -> bool {
-    keys.map(|ks| ks.contains(&key)).unwrap_or(false)
+    keys.is_some_and(|ks| ks.contains(&key))
 }
 
 /// Extracts the raw (toneless, markless, lowercase) key chars from appending transformations.
@@ -325,15 +325,9 @@ fn get_last_tone_transformation(composition: &[Transformation]) -> Option<Transf
 }
 
 fn is_free(composition: &[Transformation], trans_idx: usize, effect_type: EffectType) -> bool {
-    for t in composition {
-        if let Some(target) = t.target
-            && target as usize == trans_idx
-            && t.rule.effect_type == effect_type
-        {
-            return false;
-        }
-    }
-    true
+    composition.iter().all(|t| {
+        !(t.target == Some(trans_idx as u8) && t.rule.effect_type == effect_type)
+    })
 }
 
 fn extract_cvc_appending_indices<'a>(
@@ -601,12 +595,7 @@ pub(crate) fn find_target(
         } else if let Some(last_appending) = find_last_appending_trans(composition)
             && is_vowel(last_appending.rule.effect_on)
         {
-            for (idx, t) in composition.iter().enumerate() {
-                if *t == last_appending {
-                    target = Some(idx as u8);
-                    break;
-                }
-            }
+            target = composition.iter().position(|t| *t == last_appending).map(|v| v as u8);
         }
 
         let Some(t_idx) = target else { continue };
@@ -648,12 +637,7 @@ fn generate_undo_transformations(
             } else if let Some(last_appending) = find_last_appending_trans(composition)
                 && is_vowel(last_appending.rule.effect_on)
             {
-                for (idx, t) in composition.iter().enumerate() {
-                    if *t == last_appending {
-                        target = Some(idx as u8);
-                        break;
-                    }
-                }
+                target = composition.iter().position(|t| *t == last_appending).map(|v| v as u8);
             }
 
             let Some(target) = target else { continue };
@@ -702,10 +686,6 @@ fn generate_undo_transformations(
     }
 }
 
-fn contains_uho(s: &str) -> bool {
-    s.contains("ưo") || s.contains("ươ")
-}
-
 /// Checks if composition contains "ưo" or "ươ" pattern directly from transformations,
 /// avoiding the expensive flatten + string search allocation.
 fn contains_uho_in_composition(composition: &[Transformation]) -> bool {
@@ -719,8 +699,7 @@ fn contains_uho_in_composition(composition: &[Transformation]) -> bool {
         let c = add_tone_to_char(t.rule.result, 0);
         if c == 'ư' {
             // Look ahead for 'o' or 'ơ'.
-            for j in (i + 1)..composition.len() {
-                let t2 = &composition[j];
+            for t2 in composition.iter().skip(i + 1) {
                 if t2.target.is_some()
                     || t2.rule.effect_type != EffectType::Appending
                     || t2.rule.key == '\0'
@@ -919,13 +898,12 @@ pub(crate) fn refresh_last_tone_target_into(
 
         let new_tone_target = find_tone_target(composition, std_style);
 
-        let mut last_tone_idx: Option<usize> = None;
-        for (i, t) in composition.iter().enumerate().rev() {
-            if t.rule.effect_type == EffectType::ToneTransformation && t.target.is_some() {
-                last_tone_idx = Some(i);
-                break;
-            }
-        }
+        let last_tone_idx = composition
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, t)| t.rule.effect_type == EffectType::ToneTransformation && t.target.is_some())
+            .map(|(i, _)| i);
 
         (new_tone_target, last_tone_idx)
     };

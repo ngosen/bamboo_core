@@ -115,7 +115,7 @@ fn hash_composition(composition: &[Transformation]) -> u64 {
     let bytes = unsafe {
         std::slice::from_raw_parts(
             composition.as_ptr() as *const u8,
-            composition.len() * std::mem::size_of::<Transformation>(),
+            std::mem::size_of_val(composition),
         )
     };
     bytes.hash(&mut hasher);

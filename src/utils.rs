@@ -156,7 +156,7 @@ fn find_vowel_position(c: char) -> Option<usize> {
 
 #[inline]
 fn find_tone_from_char(c: char) -> u8 {
-    find_vowel_position(c).map(|pos| (pos % 6) as u8).unwrap_or(0)
+    find_vowel_position(c).map_or(0, |pos| (pos % 6) as u8)
 }
 
 /// Adds or changes the tone mark of a Vietnamese vowel.

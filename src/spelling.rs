@@ -164,15 +164,9 @@ fn lookup_mask_optimized(
                 continue;
             }
 
-            let mut is_match = true;
-            for i in 0..input.len() {
-                let ic = input[i];
-                let tc = t_chars[i];
-                if ic != tc && (input_is_complete || add_mark_to_toneless_char(tc, 0) != ic) {
-                    is_match = false;
-                    break;
-                }
-            }
+            let is_match = input.iter().zip(t_chars.iter()).all(|(&ic, &tc)| {
+                ic == tc || (!input_is_complete && add_mark_to_toneless_char(tc, 0) == ic)
+            });
 
             if is_match {
                 ret |= 1u16 << index;

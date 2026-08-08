@@ -114,15 +114,11 @@ impl TransformationStack {
 
 #[inline]
 fn uoh_tail_match(s: &str) -> bool {
-    for pat in ["uơ", "ưo"] {
-        if let Some(idx) = s.find(pat) {
-            let after = &s[idx + pat.len()..];
-            if after.chars().next().is_some_and(|c| c.is_alphabetic()) {
-                return true;
-            }
-        }
-    }
-    false
+    ["uơ", "ưo"].iter().any(|pat| {
+        s.find(pat).is_some_and(|idx| {
+            s[idx + pat.len()..].chars().next().is_some_and(|c| c.is_alphabetic())
+        })
+    })
 }
 
 /// The main stateful processor of the Vietnamese Input Method Engine.
@@ -659,7 +655,7 @@ impl Engine {
             let cache_comp: &[Transformation] = if is_upper_case {
                 self.scratch_comp.clear();
                 self.scratch_comp.extend_from_slice(work.as_slice());
-                if self.scratch_comp.len() > 0 {
+                if !self.scratch_comp.is_empty() {
                     self.scratch_comp.as_mut_slice()[0].is_upper_case = false;
                 }
                 self.scratch_comp.as_slice()
@@ -823,11 +819,12 @@ impl Engine {
                 self.config.to_flags() & crate::bamboo_util::ESTD_TONE_STYLE != 0,
                 &mut extra,
             );
-            for t in extra.as_slice() {
-                if self.active_len < MAX_ACTIVE_TRANS {
-                    self.active_buffer[self.active_len] = *t;
-                    self.active_len += 1;
-                }
+            let available = MAX_ACTIVE_TRANS - self.active_len;
+            let to_copy = extra.len().min(available);
+            if to_copy > 0 {
+                self.active_buffer[self.active_len..self.active_len + to_copy]
+                    .copy_from_slice(&extra.as_slice()[..to_copy]);
+                self.active_len += to_copy;
             }
         }
     }
@@ -873,11 +870,12 @@ impl Engine {
                 self.config.to_flags() & crate::bamboo_util::ESTD_TONE_STYLE != 0,
                 &mut extra,
             );
-            for t in extra.as_slice() {
-                if self.active_len < MAX_ACTIVE_TRANS {
-                    self.active_buffer[self.active_len] = *t;
-                    self.active_len += 1;
-                }
+            let available = MAX_ACTIVE_TRANS - self.active_len;
+            let to_copy = extra.len().min(available);
+            if to_copy > 0 {
+                self.active_buffer[self.active_len..self.active_len + to_copy]
+                    .copy_from_slice(&extra.as_slice()[..to_copy]);
+                self.active_len += to_copy;
             }
         }
     }

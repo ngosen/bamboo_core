@@ -21,11 +21,11 @@ impl Default for Config {
 
 impl Config {
     /// Creates a new configuration with default values.
-    pub fn new() -> Self {
-        Self::default()
+    pub const fn new() -> Self {
+        Self { free_tone_marking: true, std_tone_style: true, auto_correct: true }
     }
 
-    pub(crate) fn to_flags(self) -> u32 {
+    pub(crate) const fn to_flags(self) -> u32 {
         let mut flags = 0;
         if self.free_tone_marking {
             flags |= 1 << 0;
@@ -40,7 +40,7 @@ impl Config {
     }
 
     /// Creates a configuration from a bitmask of flags.
-    pub fn from_flags(flags: u32) -> Self {
+    pub const fn from_flags(flags: u32) -> Self {
         Self {
             free_tone_marking: (flags & (1 << 0)) != 0,
             std_tone_style: (flags & (1 << 1)) != 0,
