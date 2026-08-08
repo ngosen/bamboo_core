@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.14] - 2026-08-09
+
+### Performance
+- **Uppercase DFA caching:** Uppercase keys (e.g. `TIEENGS`) now share the same DFA cache as lowercase. Previously, all uppercase keys bypassed the DFA fast path entirely, causing 50–106× slowdown. After fix: uppercase is ~1.0× (same as lowercase).
+  - `AA → Â`: 1,421 ns → **13.5 ns** (105× faster)
+  - `NGUOWIF → NGƯỜI`: 7,807 ns → **74.3 ns** (105× faster)
+  - `TIEENGS` (all uppercase): 7,307 ns → **80.5 ns** (91× faster)
+- **`warm_up()` memory reduction:** Reuse a single `Engine` instance during DFA pre-compilation instead of creating a new one per syllable. Allocations reduced from **2,544 MB → 11.4 MB** (223× less).
+- **Smaller `Engine::new()` allocation:** Reduced DFA pre-allocation from 1,024 → 128 states, committed_text from 256 → 128 bytes, preedit buffers from 64 → 32 bytes. `Engine::new()` now allocates **98 KB** instead of 651 KB (6.6× smaller).
+
+### Added
+- **`Engine::dfa_state_count()`** — returns the number of DFA states currently cached.
+- **`Engine::dfa_arena_len()`** — returns the number of Transformations in the DFA arena.
+- **`Engine::dfa_composition_count()`** — returns the number of entries in the DFA composition-to-state map.
+- **`Engine::committed_text_capacity()`** — returns the capacity of the committed text buffer.
+
+### Internal
+- `DfaCompiler` now owns an `Engine` instance and resets it per syllable (no repeated allocation).
+- DFA fast path uses `lower_key` for lookup; uppercase flag applied post-copy on first transformation.
+- DFA JIT cache normalizes compositions to lowercase so uppercase/lowercase share transitions.
+
 ## [0.3.13] - 2026-08-05
 
 ### Added

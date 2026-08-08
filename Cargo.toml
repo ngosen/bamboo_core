@@ -1,6 +1,6 @@
 [package]
 name = "bamboo-core"
-version = "0.3.13"
+version = "0.3.14"
 edition = "2024"
 
 description = "Vietnamese input method engine written in Rust"
@@ -35,5 +35,14 @@ wasm = ["wasm-bindgen"]
 name = "engine_bench"
 harness = false
 
+[[bench]]
+name = "telex_benchmark"
+harness = false
+
+[[bench]]
+name = "memory_profile"
+harness = false
+
 [dev-dependencies]
 uvie = "2.1.1"
+skey-engine = { path = "examples/skey-engine" }

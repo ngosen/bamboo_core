@@ -48,8 +48,8 @@ impl Dfa {
     /// Creates a new DFA with an initial empty state.
     pub fn new() -> Self {
         let mut dfa = Self {
-            states: Vec::with_capacity(1024),
-            arena: Vec::with_capacity(4096),
+            states: Vec::with_capacity(128),
+            arena: Vec::with_capacity(512),
             composition_to_state: FxHashMap::default(),
         };
         let empty_comp: Box<[Transformation]> = Box::new([]);
@@ -92,14 +92,18 @@ impl Dfa {
 
 /// A DFA compiler that supports pre-initializing common states.
 pub struct DfaCompiler<'a> {
+    #[allow(dead_code)]
     pub input_method: &'a InputMethod,
+    #[allow(dead_code)]
     pub flags: u32,
     pub dfa: Dfa,
+    engine: crate::Engine,
 }
 
 impl<'a> DfaCompiler<'a> {
     pub fn new(im: &'a InputMethod, flags: u32) -> Self {
-        Self { input_method: im, flags, dfa: Dfa::new() }
+        let engine = crate::Engine::with_config(im.clone(), crate::Config::from_flags(flags));
+        Self { input_method: im, flags, dfa: Dfa::new(), engine }
     }
 
     /// Compiles common Vietnamese syllables into the DFA.
@@ -128,10 +132,7 @@ impl<'a> DfaCompiler<'a> {
     }
 
     fn simulate_str(&mut self, s: &str) {
-        let mut engine = crate::Engine::with_config(
-            self.input_method.clone(),
-            crate::Config::from_flags(self.flags),
-        );
+        self.engine.reset();
 
         let mut current_state = 0u32;
         for k in s.chars() {
@@ -140,9 +141,9 @@ impl<'a> DfaCompiler<'a> {
             }
 
             let prev_state = current_state;
-            engine.process_key(k, crate::Mode::Vietnamese);
+            self.engine.process_key(k, crate::Mode::Vietnamese);
 
-            let comp = engine.active_slice();
+            let comp = self.engine.active_slice();
             current_state = self.dfa.add_state(comp);
 
             // Link the transition
