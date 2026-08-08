@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.15] - 2026-08-09
+
+### Docs
+- Removed benchmark tables from README (available in git history).
+
 ## [0.3.14] - 2026-08-09
 
 ### Performance
