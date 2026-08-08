@@ -205,7 +205,7 @@ impl Engine {
         non_ascii_effect_keys.dedup();
 
         Self {
-            committed_text: String::with_capacity(256),
+            committed_text: String::with_capacity(128),
             active_buffer: [Transformation::default(); MAX_ACTIVE_TRANS],
             active_len: 0,
             input_method,
@@ -219,8 +219,8 @@ impl Engine {
             work_comp: TransformationStack::new(),
             scratch_comp: TransformationStack::new(),
 
-            prev_preedit: String::with_capacity(64),
-            delta_buf: String::with_capacity(64),
+            prev_preedit: String::with_capacity(32),
+            delta_buf: String::with_capacity(32),
             dfa: crate::dfa::Dfa::new(),
             current_state_id: 0,
 
@@ -599,7 +599,8 @@ impl Engine {
 
         // DFA Fast Path: if DFA has a cached transition, key is valid.
         // Skip can_process_key_raw entirely.
-        if lower_key.is_ascii() && !is_upper_case {
+        // Uses lowercase key for DFA lookup — uppercase shares the same DFA cache.
+        if lower_key.is_ascii() {
             let next_state_id =
                 self.dfa.get_state(self.current_state_id).transitions[lower_key as usize];
             if next_state_id != 0 {
@@ -611,6 +612,11 @@ impl Engine {
                 let comp = self.dfa.get_composition(next_state_id);
                 self.active_len = comp.len().min(MAX_ACTIVE_TRANS);
                 self.active_buffer[..self.active_len].copy_from_slice(comp);
+                // Restore uppercase flag on first transformation if original key was uppercase.
+                // DFA stores lowercase compositions; we adjust case at output time.
+                if is_upper_case && self.active_len > 0 {
+                    self.active_buffer[0].is_upper_case = true;
+                }
                 return;
             }
         }
@@ -644,9 +650,22 @@ impl Engine {
         self.take_active_into(&mut work);
         self.new_composition_in_place(&mut work, &mut scratch, lower_key, is_upper_case);
 
-        // Try to update DFA (Lazy JIT)
-        if lower_key.is_ascii() && !is_upper_case && work.len() <= MAX_ACTIVE_TRANS {
-            let next_id = self.dfa.add_state(work.as_slice());
+        // Try to update DFA (Lazy JIT).
+        // Always cache using lowercase key so uppercase keys reuse the same DFA transitions.
+        if lower_key.is_ascii() && work.len() <= MAX_ACTIVE_TRANS {
+            // For uppercase: create a lowercase copy of the composition for DFA caching.
+            // This ensures both 'a' and 'A' share the same DFA transition from the same state.
+            let cache_comp: &[Transformation] = if is_upper_case {
+                self.scratch_comp.clear();
+                self.scratch_comp.extend_from_slice(work.as_slice());
+                if self.scratch_comp.len() > 0 {
+                    self.scratch_comp.as_mut_slice()[0].is_upper_case = false;
+                }
+                self.scratch_comp.as_slice()
+            } else {
+                work.as_slice()
+            };
+            let next_id = self.dfa.add_state(cache_comp);
             self.dfa.states[self.current_state_id as usize].transitions[lower_key as usize] =
                 next_id;
             self.current_state_id = next_id;
@@ -856,6 +875,26 @@ impl Engine {
         self.delta_buf.clear();
         self.current_state_id = 0;
         self.snapshot_len = 0;
+    }
+
+    /// Returns the number of DFA states currently cached.
+    pub fn dfa_state_count(&self) -> usize {
+        self.dfa.states.len()
+    }
+
+    /// Returns the number of Transformations stored in the DFA arena.
+    pub fn dfa_arena_len(&self) -> usize {
+        self.dfa.arena.len()
+    }
+
+    /// Returns the number of entries in the DFA composition-to-state map.
+    pub fn dfa_composition_count(&self) -> usize {
+        self.dfa.composition_to_state.len()
+    }
+
+    /// Returns the capacity (in bytes) of the committed_text buffer.
+    pub fn committed_text_capacity(&self) -> usize {
+        self.committed_text.capacity()
     }
 }
 
