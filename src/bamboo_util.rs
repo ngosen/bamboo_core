@@ -706,6 +706,38 @@ fn contains_uho(s: &str) -> bool {
     s.contains("ưo") || s.contains("ươ")
 }
 
+/// Checks if composition contains "ưo" or "ươ" pattern directly from transformations,
+/// avoiding the expensive flatten + string search allocation.
+fn contains_uho_in_composition(composition: &[Transformation]) -> bool {
+    for i in 0..composition.len() {
+        let t = &composition[i];
+        if t.target.is_some() || t.rule.effect_type != EffectType::Appending || t.rule.key == '\0'
+        {
+            continue;
+        }
+        // Get the toneless result char.
+        let c = add_tone_to_char(t.rule.result, 0);
+        if c == 'ư' {
+            // Look ahead for 'o' or 'ơ'.
+            for j in (i + 1)..composition.len() {
+                let t2 = &composition[j];
+                if t2.target.is_some()
+                    || t2.rule.effect_type != EffectType::Appending
+                    || t2.rule.key == '\0'
+                {
+                    continue;
+                }
+                let c2 = add_tone_to_char(t2.rule.result, 0);
+                if c2 == 'o' || c2 == 'ơ' {
+                    return true;
+                }
+                break; // Found next appending char, not o/ơ.
+            }
+        }
+    }
+    false
+}
+
 /// Generates a list of transformations to apply based on the current composition and rules.
 pub(crate) fn generate_transformations(
     composition: &[Transformation],
@@ -766,11 +798,7 @@ pub(crate) fn generate_transformations(
             }
         }
     } else {
-        let flat = flatten_slice(
-            composition,
-            OutputOptions::NONE | OutputOptions::TONE_LESS | OutputOptions::LOWER_CASE,
-        );
-        if contains_uho(&flat) {
+        if contains_uho_in_composition(composition) {
             let cvc = extract_cvc_trans(composition);
             let vowels = cvc.vo_slice();
             let mut app_vowels = [Transformation::default(); 8];

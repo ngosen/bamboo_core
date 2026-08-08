@@ -287,9 +287,9 @@ impl Engine {
         self.config = config;
     }
 
-    /// Returns a copy of the current input method.
-    pub fn input_method(&self) -> InputMethod {
-        self.input_method.clone()
+    /// Returns a reference to the current input method.
+    pub fn input_method(&self) -> &InputMethod {
+        &self.input_method
     }
 
     /// Warms up the DFA by pre-compiling common Vietnamese syllables.
@@ -482,16 +482,17 @@ impl Engine {
     }
 
     fn lcp_chars_and_bytes(a: &str, b: &str) -> (usize, usize) {
-        let mut lcp_chars = 0usize;
-        let mut lcp_bytes = 0usize;
-        for (ac, bc) in a.chars().zip(b.chars()) {
-            if ac == bc {
-                lcp_chars += 1;
-                lcp_bytes += ac.len_utf8();
-            } else {
-                break;
-            }
+        let a_bytes = a.as_bytes();
+        let b_bytes = b.as_bytes();
+        let min_len = a_bytes.len().min(b_bytes.len());
+        // Byte-level comparison: identical UTF-8 chars have identical byte sequences.
+        // This is SIMD-friendly and avoids per-char UTF-8 decoding.
+        let mut lcp_bytes = 0;
+        while lcp_bytes < min_len && a_bytes[lcp_bytes] == b_bytes[lcp_bytes] {
+            lcp_bytes += 1;
         }
+        // Count chars up to the byte boundary.
+        let lcp_chars = a[..lcp_bytes].chars().count();
         (lcp_chars, lcp_bytes)
     }
 

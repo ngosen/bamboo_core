@@ -203,24 +203,22 @@ pub fn is_vietnamese_rune(c: char) -> bool {
 #[allow(unused)]
 #[inline]
 pub fn has_any_vietnamese_rune(word: &str) -> bool {
-    word.chars().any(|c| {
-        is_vietnamese_rune(if c.is_ascii() {
-            c.to_ascii_lowercase()
-        } else {
-            c.to_lowercase().next().unwrap_or(c)
-        })
-    })
+    // Fast path: Vietnamese runes are all non-ASCII (đ, ă, â, ê, ô, ơ, ư + toned).
+    // If the word is entirely ASCII, no Vietnamese runes are possible.
+    if word.is_ascii() {
+        return false;
+    }
+    word.chars().any(|c| is_vietnamese_rune(lower(c)))
 }
 
 /// Returns true if the word contains at least one Vietnamese vowel.
 #[allow(unused)]
 #[inline]
 pub fn has_any_vietnamese_vowel(word: &str) -> bool {
-    word.chars().any(|c| {
-        is_vowel(if c.is_ascii() {
-            c.to_ascii_lowercase()
-        } else {
-            c.to_lowercase().next().unwrap_or(c)
-        })
-    })
+    // Fast path: check ASCII vowels (a, e, i, o, u, y) on raw bytes.
+    if word.as_bytes().iter().any(|&b| b < 128 && (ASCII_PROPS[b as usize] & F_VOWEL) != 0) {
+        return true;
+    }
+    // Slow path: only non-ASCII chars can have Vietnamese vowels.
+    word.chars().any(|c| !c.is_ascii() && is_vowel(c.to_lowercase().next().unwrap_or(c)))
 }
