@@ -1,15 +1,14 @@
-//! RAM & memory profiling benchmark for bamboo-core vs skey-engine.
+//! RAM & memory profiling benchmark for bamboo-core.
 //!
 //! Measures:
 //! - Struct size (stack layout)
-//! - Heap growth during long typing sessions (100, 1000, 10000 words)
+//! - Heap growth during long typing sessions
 //! - DFA memory growth
 //! - committed_text growth
 //! - Allocations per reset cycle
 
 #![allow(deprecated, unused)]
-use bamboo_core::{Engine, InputMethod, Mode};
-use skey_engine::{SkeyEngine, Method};
+use bamboo_core::{Engine, InputMethod, Mode, OutputOptions};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -45,10 +44,6 @@ fn reset_counters() {
     ALLOC_COUNT.store(0, Ordering::Relaxed);
 }
 
-fn current_net() -> isize {
-    ALLOCATED.load(Ordering::Relaxed) as isize - DEALLOCATED.load(Ordering::Relaxed) as isize
-}
-
 fn snapshot() -> (usize, usize, isize) {
     let a = ALLOCATED.load(Ordering::Relaxed);
     let d = DEALLOCATED.load(Ordering::Relaxed);
@@ -82,10 +77,6 @@ fn test_struct_sizes() {
         std::mem::size_of::<Engine>() as f64 / 1024.0
     );
     println!(
-        "  SkeyEngine size:       {:>8} bytes",
-        std::mem::size_of::<SkeyEngine>()
-    );
-    println!(
         "  Transformation size:   {:>8} bytes",
         std::mem::size_of::<bamboo_core::Transformation>()
     );
@@ -103,7 +94,6 @@ fn test_struct_sizes() {
 
 fn test_engine_new_cost() {
     println!("=== 2. Engine::new() allocation cost ===");
-
     reset_counters();
     let before = snapshot();
     let e = Engine::new(InputMethod::telex());
@@ -116,19 +106,6 @@ fn test_engine_new_cost() {
         net_count
     );
     drop(e);
-
-    reset_counters();
-    let before = snapshot();
-    let s = SkeyEngine::new(Method::Telex);
-    let after = snapshot();
-    let net_alloc = after.0 as isize - before.0 as isize;
-    let net_count = after.2 - before.2;
-    println!(
-        "  SkeyEngine::new():     {:>8} bytes allocated, {} allocations",
-        format_bytes(net_alloc as usize),
-        net_count
-    );
-    drop(s);
     println!();
 }
 
@@ -138,7 +115,6 @@ fn test_engine_new_cost() {
 
 fn test_warm_up_cost() {
     println!("=== 3. warm_up() cost ===");
-
     reset_counters();
     let before = snapshot();
     let mut e = Engine::new(InputMethod::telex());
@@ -165,7 +141,6 @@ fn test_warm_up_cost() {
         format_bytes((new_bytes + warmup_bytes) as usize)
     );
 
-    // Check DFA stats
     let dfa_states = e.dfa_state_count();
     let dfa_arena = e.dfa_arena_len();
     println!("  DFA states after warm_up: {}", dfa_states);
@@ -207,7 +182,6 @@ fn test_ram_growth() {
             let w = words[i % words.len()];
             e.process_str(w, Mode::Vietnamese);
             e.process_key(' ', Mode::Vietnamese);
-            // Commit periodically to simulate real usage
             if i % 5 == 0 {
                 e.commit();
             }
@@ -219,8 +193,7 @@ fn test_ram_growth() {
         let typing_count = after_typing.2 - after_warmup.2;
         let dfa_states = e.dfa_state_count();
 
-        // Get committed text size
-        let text = e.get_processed_str(bamboo_core::OutputOptions::FULL_TEXT);
+        let text = e.get_processed_str(OutputOptions::FULL_TEXT);
 
         println!(
             "{:<20} {:>12} {:>12} {:>12} {:>12}",
@@ -254,7 +227,6 @@ fn test_dfa_growth() {
     for (i, &k) in keys.iter().enumerate() {
         e.process_key(k, Mode::Vietnamese);
 
-        // Check at specific checkpoints
         if [0, 6, 13, 21, 29, 38, 46, 55, 65, 76, 84, 92, 100, 110, 118, 124, 131, 139, 147, 155]
             .contains(&i)
         {
@@ -303,61 +275,24 @@ fn test_reset_leak() {
         format_bytes(leaked.max(0) as usize),
         alloc_count
     );
-    println!(
-        "  DFA states after:      {}",
-        e.dfa_state_count()
-    );
-    println!(
-        "  committed_text cap:    {} bytes",
-        e.committed_text_capacity()
-    );
+    println!("  DFA states after:      {}", e.dfa_state_count());
+    println!("  committed_text cap:    {} bytes", e.committed_text_capacity());
     println!();
 }
 
 // ===========================================================================
-// Test 7: skey-engine memory (stateless — should be ~zero growth)
-// ===========================================================================
-
-fn test_skey_memory() {
-    println!("=== 7. skey-engine memory (stateless) ===");
-
-    let s = SkeyEngine::new(Method::Telex);
-
-    reset_counters();
-    let before = snapshot();
-
-    for i in 0..10000 {
-        let result = s.transform("tieengs vietj huowng quoocs nguwowif");
-    }
-
-    let after = snapshot();
-    let allocated = after.0 as isize - before.0 as isize;
-    let alloc_count = after.2 - before.2;
-
-    println!(
-        "  10000 transforms:      {:>8} net allocated, {} allocs",
-        format_bytes(allocated.max(0) as usize),
-        alloc_count
-    );
-    println!("  (Stateless — no internal state growth)");
-    println!();
-}
-
-// ===========================================================================
-// Test 8: Uppercase DFA bypass analysis
+// Test 7: Uppercase DFA bypass analysis
 // ===========================================================================
 
 fn test_uppercase_dfa_bypass() {
-    println!("=== 8. Uppercase DFA bypass analysis ===");
+    println!("=== 7. Uppercase DFA bypass analysis ===");
     println!("  DFA fast path condition: is_ascii && !is_upper_case");
     println!("  → ALL uppercase keys hit the slow path (rule engine)");
-    println!("  → DFA JIT also skips uppercase (line 648)");
     println!();
 
     let mut e = Engine::new(InputMethod::telex());
     e.warm_up();
 
-    // Test lowercase DFA hit
     let start = std::time::Instant::now();
     for _ in 0..100_000 {
         e.reset();
@@ -367,7 +302,6 @@ fn test_uppercase_dfa_bypass() {
     }
     let lower_ns = start.elapsed().as_nanos() as f64 / 100_000.0;
 
-    // Test uppercase (DFA miss)
     let start = std::time::Instant::now();
     for _ in 0..100_000 {
         e.reset();
@@ -382,9 +316,8 @@ fn test_uppercase_dfa_bypass() {
     println!("  ratio:                 {:>8.1}x slower", upper_ns / lower_ns);
     println!();
 
-    // Test single char DFA hit vs miss
     e.reset();
-    e.process_key('a', Mode::Vietnamese); // prime DFA
+    e.process_key('a', Mode::Vietnamese);
     e.reset();
 
     let start = std::time::Instant::now();
@@ -408,11 +341,11 @@ fn test_uppercase_dfa_bypass() {
 }
 
 // ===========================================================================
-// Test 9: Sentence simulation — realistic long session
+// Test 8: Realistic long session
 // ===========================================================================
 
 fn test_realistic_session() {
-    println!("=== 9. Realistic long session (100 sentences) ===");
+    println!("=== 8. Realistic long session (100 sentences) ===");
 
     let sentences = [
         "hom nay troij depf qua, toi di choiwj voiwf banj bef.",
@@ -421,7 +354,7 @@ fn test_realistic_session() {
         "tuoif treo hom nayf hocj ratj chams va nghifeng tueej.",
         "duownjg nhuw laajf nguwowif nha dangf nauw anwj.",
         "buwows saungf hom nayf troijf ratj depf, khongf cooj muaaj.",
-        "anhf ayf laf mojt nguwowif totj buojngf, luoonf giuwp doj moiwf nguowif.",
+        "anhf ayf laf mojt nguwowif totj buojngf, luoonf giuwp doj moiwf nguwowif.",
         "truwowjt khi di nguwr, toi thuwowngf doocj sajspj motf cuoons sajspj.",
         "nguwowif vietj namf tuowngf tuwf ratj caof, khongf soj gianj nanf.",
         "moij ngayf toi ddayf tuowfj lucj 6 gioof sangf deej tapj theer ducj.",
@@ -444,7 +377,7 @@ fn test_realistic_session() {
     let typing_count = after.2 - after_warmup.2;
     let dfa_states = e.dfa_state_count();
 
-    let text = e.get_processed_str(bamboo_core::OutputOptions::FULL_TEXT);
+    let text = e.get_processed_str(OutputOptions::FULL_TEXT);
 
     println!(
         "  100 sentences typed:   {:>8} allocated, {} allocs",
@@ -454,37 +387,14 @@ fn test_realistic_session() {
     println!("  DFA states:            {}", dfa_states);
     println!("  Output text length:    {} bytes", text.len());
     println!();
-
-    // Now do the same with skey
-    reset_counters();
-    let s = SkeyEngine::new(Method::Telex);
-    let before = snapshot();
-
-    let mut total_output = String::new();
-    for i in 0..100 {
-        let result = s.transform(sentences[i % sentences.len()]);
-        total_output.push_str(&result);
-        total_output.push('\n');
-    }
-
-    let after = snapshot();
-    let skey_bytes = after.0 as isize - before.0 as isize;
-
-    println!(
-        "  skey 100 sentences:    {:>8} allocated, {} allocs",
-        format_bytes(skey_bytes.max(0) as usize),
-        after.2 - before.2
-    );
-    println!("  skey output length:    {} bytes", total_output.len());
-    println!();
 }
 
 // ===========================================================================
-// Test 10: EXTREME — 10,000 Vietnamese sentences (gõ cực lâu)
+// Test 9: EXTREME — 10,000 Vietnamese sentences
 // ===========================================================================
 
 fn test_extreme_vietnamese() {
-    println!("=== 10. EXTREME Vietnamese — 10,000 sentences ===");
+    println!("=== 9. EXTREME Vietnamese — 10,000 sentences ===");
 
     let sentences = [
         "hom nay troij depf qua, toi di choiwj voiwf banj bef.",
@@ -493,7 +403,7 @@ fn test_extreme_vietnamese() {
         "tuoif treo hom nayf hocj ratj chams va nghifeng tueej.",
         "duownjg nhuw laajf nguwowif nha dangf nauw anwj.",
         "buwows saungf hom nayf troijf ratj depf, khongf cooj muaaj.",
-        "anhf ayf laf mojt nguwowif totj buojngf, luoonf giuwp doj moiwf nguowif.",
+        "anhf ayf laf mojt nguwowif totj buojngf, luoonf giuwp doj moiwf nguwowif.",
         "truwowjt khi di nguwr, toi thuwowngf doocj sajspj motf cuoons sajspj.",
         "nguwowif vietj namf tuowngf tuwf ratj caof, khongf soj gianj nanf.",
         "moij ngayf toi ddayf tuowfj lucj 6 gioof sangf deej tapj theer ducj.",
@@ -504,7 +414,6 @@ fn test_extreme_vietnamese() {
     e.warm_up();
     let after_warmup = snapshot();
 
-    // Track DFA growth at intervals
     let checkpoints = [100, 500, 1000, 2000, 5000, 10000];
     println!(
         "{:<12} {:>12} {:>12} {:>12} {:>12} {:>15}",
@@ -521,7 +430,7 @@ fn test_extreme_vietnamese() {
         if checkpoints.contains(&(i + 1)) {
             let now = snapshot();
             let heap = now.0 as isize - after_warmup.0 as isize;
-            let text = e.get_processed_str(bamboo_core::OutputOptions::FULL_TEXT);
+            let text = e.get_processed_str(OutputOptions::FULL_TEXT);
             println!(
                 "{:<12} {:>12} {:>12} {:>12} {:>12} {:>15}",
                 i + 1,
@@ -537,7 +446,7 @@ fn test_extreme_vietnamese() {
     let after = snapshot();
     let total_heap = after.0 as isize - after_warmup.0 as isize;
     let total_allocs = after.2 - after_warmup.2;
-    let text = e.get_processed_str(bamboo_core::OutputOptions::FULL_TEXT);
+    let text = e.get_processed_str(OutputOptions::FULL_TEXT);
 
     println!("{}", "-".repeat(80));
     println!(
@@ -548,36 +457,14 @@ fn test_extreme_vietnamese() {
         format_bytes(text.len())
     );
     println!();
-
-    // Compare with skey
-    reset_counters();
-    let s = SkeyEngine::new(Method::Telex);
-    let before = snapshot();
-
-    let mut total_output = String::new();
-    for i in 0..10000 {
-        let result = s.transform(sentences[i % sentences.len()]);
-        total_output.push_str(&result);
-        total_output.push(' ');
-    }
-
-    let after = snapshot();
-    let skey_heap = after.0 as isize - before.0 as isize;
-    println!(
-        "  skey 10K:  heap={:>10}, allocs={}, text={}",
-        format_bytes(skey_heap.max(0) as usize),
-        after.2 - before.2,
-        format_bytes(total_output.len())
-    );
-    println!();
 }
 
 // ===========================================================================
-// Test 11: EXTREME — 10,000 English sentences (pure ASCII, no DFA growth)
+// Test 10: EXTREME — 10,000 English sentences
 // ===========================================================================
 
 fn test_extreme_english() {
-    println!("=== 11. EXTREME English — 10,000 sentences ===");
+    println!("=== 10. EXTREME English — 10,000 sentences ===");
 
     let sentences = [
         "The quick brown fox jumps over the lazy dog.",
@@ -627,7 +514,7 @@ fn test_extreme_english() {
     let after = snapshot();
     let total_heap = after.0 as isize - after_warmup.0 as isize;
     let total_allocs = after.2 - after_warmup.2;
-    let text = e.get_processed_str(bamboo_core::OutputOptions::FULL_TEXT);
+    let text = e.get_processed_str(OutputOptions::FULL_TEXT);
 
     println!("{}", "-".repeat(70));
     println!(
@@ -638,143 +525,15 @@ fn test_extreme_english() {
         format_bytes(text.len())
     );
     println!();
-
-    // Compare with skey
-    reset_counters();
-    let s = SkeyEngine::new(Method::Telex);
-    let before = snapshot();
-
-    let mut total_output = String::new();
-    for i in 0..10000 {
-        let result = s.transform(sentences[i % sentences.len()]);
-        total_output.push_str(&result);
-        total_output.push('\n');
-    }
-
-    let after = snapshot();
-    let skey_heap = after.0 as isize - before.0 as isize;
-    println!(
-        "  skey 10K:  heap={:>10}, allocs={}, text={}",
-        format_bytes(skey_heap.max(0) as usize),
-        after.2 - before.2,
-        format_bytes(total_output.len())
-    );
-    println!();
 }
 
 // ===========================================================================
-// Test 12: EXTREME — Mixed VI + EN (realistic user session)
-// ===========================================================================
-
-fn test_extreme_mixed() {
-    println!("=== 12. EXTREME Mixed VI+EN — 10,000 messages ===");
-
-    let messages = [
-        ("vi", "hom nay toi hoc lapj trinhr, ratj hayf."),
-        ("en", "fn main() { let x = 42; }"),
-        ("vi", "tiengf vietj depf qua, toi thifcj thuwf hocj."),
-        ("en", "use bamboo_core::{Engine, Mode, InputMethod};"),
-        ("vi", "chao mowf banf, banf tenw giw?"),
-        ("en", "let mut engine = Engine::new(InputMethod::telex());"),
-        ("vi", "nguwowif vietj namf tuowngf tuwf ratj caof."),
-        ("en", "async fn process(input: &str) -> Result<String> { ... }"),
-        ("vi", "moij ngayf toi ddayf tuowfj lucj 6 gioof sangf."),
-        ("en", "const MAX_LEN: usize = 1024;"),
-        ("vi", "troiwf hom nayf depf lamf, khongf cooj muaaj."),
-        ("en", "struct Database { pool: Pool, config: Config }"),
-        ("vi", "toi dangf hocj ngon nguwr Rust, ratj thuwcj thuwfj."),
-        ("en", "match self.status { Ok(v) => v, Err(e) => return Err(e) }"),
-        ("vi", "buwows saungf hom nayf troijf ratj depf."),
-        ("en", "impl Iterator for MyIter { type Item = u32; }"),
-        ("vi", "duownjg nhuw laajf nguwowif nha dangf nauw anwj."),
-        ("en", "fn fmt(&self, f: &mut Formatter) -> fmt::Result { ... }"),
-        ("vi", "anhf ayf laf mojt nguwowif totj buojngf."),
-        ("en", "pub fn new() -> Self { Self { data: Vec::new() } }"),
-    ];
-
-    reset_counters();
-    let mut e = Engine::new(InputMethod::telex());
-    e.warm_up();
-    let after_warmup = snapshot();
-
-    let checkpoints = [100, 500, 1000, 2000, 5000, 10000];
-    println!(
-        "{:<12} {:>12} {:>12} {:>12} {:>15}",
-        "Messages", "Heap alloc", "DFA states", "DFA arena", "committed_text"
-    );
-    println!("{}", "-".repeat(70));
-
-    for i in 0..10000 {
-        let (mode, msg) = messages[i % messages.len()];
-        let m = if mode == "vi" { Mode::Vietnamese } else { Mode::English };
-        e.process_str(msg, m);
-        e.process_key('\n', m);
-        e.commit();
-
-        if checkpoints.contains(&(i + 1)) {
-            let now = snapshot();
-            let heap = now.0 as isize - after_warmup.0 as isize;
-            println!(
-                "{:<12} {:>12} {:>12} {:>12} {:>15}",
-                i + 1,
-                format_bytes(heap.max(0) as usize),
-                e.dfa_state_count(),
-                e.dfa_arena_len(),
-                format_bytes(e.committed_text_capacity())
-            );
-        }
-    }
-
-    let after = snapshot();
-    let total_heap = after.0 as isize - after_warmup.0 as isize;
-    let total_allocs = after.2 - after_warmup.2;
-    let text = e.get_processed_str(bamboo_core::OutputOptions::FULL_TEXT);
-
-    println!("{}", "-".repeat(70));
-    println!(
-        "  FINAL:     heap={:>10}, allocs={}, dfa_states={}, text={}",
-        format_bytes(total_heap.max(0) as usize),
-        total_allocs,
-        e.dfa_state_count(),
-        format_bytes(text.len())
-    );
-    println!();
-
-    // Compare with skey
-    reset_counters();
-    let s = SkeyEngine::new(Method::Telex);
-    let before = snapshot();
-
-    let mut total_output = String::new();
-    for i in 0..10000 {
-        let (mode, msg) = messages[i % messages.len()];
-        if mode == "vi" {
-            total_output.push_str(&s.transform(msg));
-        } else {
-            total_output.push_str(msg);
-        }
-        total_output.push('\n');
-    }
-
-    let after = snapshot();
-    let skey_heap = after.0 as isize - before.0 as isize;
-    println!(
-        "  skey 10K:  heap={:>10}, allocs={}, text={}",
-        format_bytes(skey_heap.max(0) as usize),
-        after.2 - before.2,
-        format_bytes(total_output.len())
-    );
-    println!();
-}
-
-// ===========================================================================
-// Test 13: DFA saturation — does DFA stop growing?
+// Test 11: DFA saturation — does DFA stop growing?
 // ===========================================================================
 
 fn test_dfa_saturation() {
-    println!("=== 13. DFA saturation — 50,000 unique Vietnamese words ===");
+    println!("=== 11. DFA saturation — 50,000 unique Vietnamese words ===");
 
-    // Generate 50,000 unique syllable combinations
     let mut words = Vec::new();
     let prefixes = ["", "b", "c", "ch", "d", "g", "h", "k", "kh", "l", "m", "n", "ng", "ngh", "nh", "p", "ph", "q", "r", "s", "t", "th", "tr", "v", "x"];
     let vowels = ["a", "e", "i", "o", "u", "aa", "ee", "oo", "aw", "ow", "uw", "ai", "ao", "au", "ay", "ie", "oa", "oe", "oi", "ua", "ue", "ui", "uo", "uy"];
@@ -838,13 +597,12 @@ fn test_dfa_saturation() {
 }
 
 // ===========================================================================
-// Test 14: Sustained typing — no commit, watch active_buffer + DFA
+// Test 12: Sustained typing — no commit
 // ===========================================================================
 
 fn test_sustained_no_commit() {
-    println!("=== 14. Sustained typing — no commit, single long word ===");
+    println!("=== 12. Sustained typing — no commit, single long word ===");
 
-    // Type a very long "word" (no spaces, no commit) to test active_buffer behavior
     let long_input = "tieengsvietjhuowngquoocsnguwowifnamfchuyeennthuyeetruw\
                       owjtnghieengshoaskhongfduowcjnhuwngfmoiwlaajtuoiftroiwf\
                       doocsmuawsphujquyfnguxhoaxbuwowsngoiflamfanhfbuocjduownjg";
@@ -854,7 +612,6 @@ fn test_sustained_no_commit() {
     e.warm_up();
     let after_warmup = snapshot();
 
-    // Type character by character, track growth
     let chars: Vec<char> = long_input.chars().collect();
     let checkpoints = [10, 50, 100, 200, 300, 500, chars.len()];
 
@@ -889,7 +646,7 @@ fn test_sustained_no_commit() {
 
 fn main() {
     println!("╔══════════════════════════════════════════════════════════════════════╗");
-    println!("║     Bamboo-core vs Skey-engine — RAM & Memory Profiling (EXTREME)  ║");
+    println!("║            Bamboo-core — RAM & Memory Profiling (EXTREME)            ║");
     println!("╚══════════════════════════════════════════════════════════════════════╝");
     println!();
 
@@ -899,12 +656,10 @@ fn main() {
     test_ram_growth();
     test_dfa_growth();
     test_reset_leak();
-    test_skey_memory();
     test_uppercase_dfa_bypass();
     test_realistic_session();
     test_extreme_vietnamese();
     test_extreme_english();
-    test_extreme_mixed();
     test_dfa_saturation();
     test_sustained_no_commit();
 

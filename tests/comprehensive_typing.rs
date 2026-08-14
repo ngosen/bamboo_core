@@ -1,3 +1,5 @@
+#![allow(deprecated, unused)]
+
 use bamboo_core::{Config, Engine, InputMethod, Mode, OutputOptions};
 
 #[test]

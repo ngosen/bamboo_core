@@ -35,6 +35,8 @@ fn test_telex_comprehensive() {
     // Tone positioning
     test_input(im.clone(), "hoas", "hóa");
     test_input(im.clone(), "hoaf", "hòa");
+
+    test_input(im.clone(), "dad", "đa");
 }
 
 #[test]

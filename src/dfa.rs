@@ -106,19 +106,16 @@ impl Default for Dfa {
 }
 
 /// Computes a fast hash of a composition slice.
-/// Uses FxHash (same as the HashMap) for consistency.
+///
+/// Uses the derived `Hash` impl, which hashes only the initialized fields and
+/// never reads struct padding bytes. Hashing raw struct bytes directly would
+/// read uninitialized padding (UB, flagged by Miri, and nondeterministic
+/// across builds) — so the field-based hash is both correct and Miri-clean.
 #[inline]
 fn hash_composition(composition: &[Transformation]) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = rustc_hash::FxHasher::default();
-    // Hash the raw bytes of the transformation slice for speed.
-    let bytes = unsafe {
-        std::slice::from_raw_parts(
-            composition.as_ptr() as *const u8,
-            std::mem::size_of_val(composition),
-        )
-    };
-    bytes.hash(&mut hasher);
+    composition.hash(&mut hasher);
     hasher.finish()
 }
 
