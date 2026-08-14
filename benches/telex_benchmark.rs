@@ -60,24 +60,17 @@ fn main() {
 
     // Category 1: tones (fresh engine per call = cold/slow path)
     {
-        let cases: &[(&str, &str)] = &[
-            ("vieetj", "việt"),
-            ("tieengs", "tiếng"),
-            ("hoof", "hồ"),
-            ("nguwowif", "người"),
-        ];
+        let cases: &[(&str, &str)] =
+            &[("vieetj", "việt"), ("tieengs", "tiếng"), ("hoof", "hồ"), ("nguwowif", "người")];
         println!("\n=== Category 1: Tones (cold per-key) ===");
         for &(input, expected) in cases {
             let inp = input.to_string();
-            bench_single(
-                &format!("tone {} -> {}", input, expected),
-                || {
-                    let mut e = Engine::new(InputMethod::telex());
-                    for c in inp.chars() {
-                        e.process_key(c, Mode::Vietnamese);
-                    }
-                },
-            );
+            bench_single(&format!("tone {} -> {}", input, expected), || {
+                let mut e = Engine::new(InputMethod::telex());
+                for c in inp.chars() {
+                    e.process_key(c, Mode::Vietnamese);
+                }
+            });
         }
     }
 
@@ -116,11 +109,8 @@ fn main() {
     // Category 3: sentence
     {
         let (mut bp, mut bb) = setup_engines!();
-        let sentences: &[&str] = &[
-            "hom nay troij depf qua",
-            "toi dang hoc lap trinhr",
-            "tiengf vietj ratj depf",
-        ];
+        let sentences: &[&str] =
+            &["hom nay troij depf qua", "toi dang hoc lap trinhr", "tiengf vietj ratj depf"];
         println!("\n=== Category 3: Sentences ===");
         for &input in sentences {
             let inp = input.to_string();
@@ -198,10 +188,10 @@ fn main() {
     {
         let (mut bp, mut bb) = setup_engines!();
         let syllables: &[&str] = &[
-            "a", "af", "as", "ar", "ax", "aj", "e", "ef", "es", "er", "ex", "ej",
-            "aa", "aas", "aaf", "aar", "aax", "aaj", "ee", "ees", "eef", "oo", "oos",
-            "aw", "aws", "awf", "ow", "ows", "owf", "uw", "uws", "uwf",
-            "dd", "tieengs", "vietj", "huowng", "quoocs", "nguwowif", "khongf",
+            "a", "af", "as", "ar", "ax", "aj", "e", "ef", "es", "er", "ex", "ej", "aa", "aas",
+            "aaf", "aar", "aax", "aaj", "ee", "ees", "eef", "oo", "oos", "aw", "aws", "awf", "ow",
+            "ows", "owf", "uw", "uws", "uwf", "dd", "tieengs", "vietj", "huowng", "quoocs",
+            "nguwowif", "khongf",
         ];
         println!("\n=== Category 7: Comprehensive syllables (avg) ===");
         let inputs: Vec<String> = syllables.iter().map(|s| s.to_string()).collect();
@@ -237,7 +227,12 @@ fn main() {
             }
         }
         let batch = start.elapsed().as_nanos() as f64 / (BENCH_ITERS * inputs.len()) as f64;
-        println!("{:<40} per-key: {:>8.1} ns | batch: {:>8.1} ns", format!("{} syllables avg", inputs.len()), pk, batch);
+        println!(
+            "{:<40} per-key: {:>8.1} ns | batch: {:>8.1} ns",
+            format!("{} syllables avg", inputs.len()),
+            pk,
+            batch
+        );
     }
 
     println!("\n=== Benchmark Complete ===");

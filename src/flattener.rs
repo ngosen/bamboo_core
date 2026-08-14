@@ -58,9 +58,10 @@ fn write_canvas_slice(composition: &[Transformation], options: OutputOptions, ou
         return;
     }
 
-    let mut next_effect: [Option<usize>; MAX_ACTIVE_TRANS] = [None; MAX_ACTIVE_TRANS];
-    let mut head_effect: [Option<usize>; MAX_ACTIVE_TRANS] = [None; MAX_ACTIVE_TRANS];
-    let mut appending_idxs = [0usize; MAX_ACTIVE_TRANS];
+    const NO_EFFECT: u8 = 0xFF;
+    let mut next_effect = [NO_EFFECT; MAX_ACTIVE_TRANS];
+    let mut head_effect = [NO_EFFECT; MAX_ACTIVE_TRANS];
+    let mut appending_idxs = [0u8; MAX_ACTIVE_TRANS];
     let mut appending_len = 0usize;
 
     for (idx, trans) in composition.iter().enumerate() {
@@ -68,18 +69,19 @@ fn write_canvas_slice(composition: &[Transformation], options: OutputOptions, ou
             && trans.rule.key != '\0'
         {
             if appending_len < MAX_ACTIVE_TRANS {
-                appending_idxs[appending_len] = idx;
+                appending_idxs[appending_len] = idx as u8;
                 appending_len += 1;
             }
         } else if let Some(target) = trans.target
             && (target as usize) < len
         {
             next_effect[idx] = head_effect[target as usize];
-            head_effect[target as usize] = Some(idx);
+            head_effect[target as usize] = idx as u8;
         }
     }
 
-    for &abs_idx in appending_idxs.iter().take(appending_len) {
+    for &abs_u8 in appending_idxs.iter().take(appending_len) {
+        let abs_idx = abs_u8 as usize;
         let appending_trans = &composition[abs_idx];
 
         let mut chr: char;
@@ -89,9 +91,9 @@ fn write_canvas_slice(composition: &[Transformation], options: OutputOptions, ou
             chr = appending_trans.rule.effect_on;
 
             let mut curr = head_effect[abs_idx];
-            let mut effects = [None; MAX_ACTIVE_TRANS];
+            let mut effects = [0u8; MAX_ACTIVE_TRANS];
             let mut count = 0;
-            while let Some(idx) = curr {
+            while curr != NO_EFFECT {
                 if count >= MAX_ACTIVE_TRANS {
                     debug_assert!(
                         false,
@@ -99,15 +101,15 @@ fn write_canvas_slice(composition: &[Transformation], options: OutputOptions, ou
                     );
                     break;
                 }
-                effects[count] = Some(idx);
+                effects[count] = curr;
                 count += 1;
-                // next_effect[idx] is always < len (built in the loop above with `target < len` guard),
-                // so this access is safe as long as the array has MAX_ACTIVE_TRANS entries.
-                curr = if idx < MAX_ACTIVE_TRANS { next_effect[idx] } else { None };
+                let idx = curr as usize;
+                curr = if idx < MAX_ACTIVE_TRANS { next_effect[idx] } else { NO_EFFECT };
             }
 
             for i in (0..count).rev() {
-                let t = &composition[effects[i].unwrap()];
+                let t = &composition[effects[i] as usize];
+
                 match t.rule.effect_type {
                     EffectType::MarkTransformation => {
                         if t.rule.effect == Mark::Raw as u8 {

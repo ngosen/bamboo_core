@@ -68,21 +68,23 @@ static TONES: Map<&'static str, Tone> = phf_map! {
 pub struct Rule {
     /// The key that triggers this rule.
     pub key: char,
-    /// Effect value:
-    /// - if `effect_type == ToneTransformation`: this is a [`Tone`] as `u8`
-    /// - if `effect_type == MarkTransformation`: this is a [`Mark`] as `u8`
-    pub effect: u8,
-    /// The type of transformation to apply.
-    pub effect_type: EffectType,
     /// The character that this rule targets (to be replaced or marked).
     pub effect_on: char,
     /// The resulting character after applying the transformation.
     pub result: char,
     /// Additional characters to append immediately after this one (used for multi-character shortcuts).
     pub appended: [char; 2],
+    /// Effect value:
+    /// - if `effect_type == ToneTransformation`: this is a [`Tone`] as `u8`
+    /// - if `effect_type == MarkTransformation`: this is a [`Mark`] as `u8`
+    pub effect: u8,
+    /// The type of transformation to apply.
+    pub effect_type: EffectType,
     /// Number of characters in `appended`.
     pub appended_len: u8,
 }
+
+const _: () = assert!(std::mem::size_of::<Rule>() <= 24);
 
 impl Rule {
     /// Sets the effect value from a [`Tone`].

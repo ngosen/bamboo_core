@@ -153,14 +153,56 @@ fn lookup_mask_optimized(
     input_is_complete: bool,
 ) -> u16 {
     let input_len = input.len() as u8;
+    if input_len == 0 {
+        return 0;
+    }
     let mut ret = 0u16;
+
+    if input_len == 1 {
+        let ic0 = input[0];
+        for (index, tokens) in rows.iter().enumerate() {
+            for (t_chars, t_len) in *tokens {
+                if *t_len < 1 || (input_is_full && *t_len > 1) {
+                    continue;
+                }
+                let tc0 = t_chars[0];
+                let is_match =
+                    ic0 == tc0 || (!input_is_complete && add_mark_to_toneless_char(tc0, 0) == ic0);
+                if is_match {
+                    ret |= 1u16 << index;
+                    break;
+                }
+            }
+        }
+        return ret;
+    }
+
+    if input_len == 2 {
+        let ic0 = input[0];
+        let ic1 = input[1];
+        for (index, tokens) in rows.iter().enumerate() {
+            for (t_chars, t_len) in *tokens {
+                if *t_len < 2 || (input_is_full && *t_len > 2) {
+                    continue;
+                }
+                let tc0 = t_chars[0];
+                let tc1 = t_chars[1];
+                let m0 =
+                    ic0 == tc0 || (!input_is_complete && add_mark_to_toneless_char(tc0, 0) == ic0);
+                let m1 =
+                    ic1 == tc1 || (!input_is_complete && add_mark_to_toneless_char(tc1, 0) == ic1);
+                if m0 && m1 {
+                    ret |= 1u16 << index;
+                    break;
+                }
+            }
+        }
+        return ret;
+    }
 
     for (index, tokens) in rows.iter().enumerate() {
         for (t_chars, t_len) in *tokens {
-            if *t_len < input_len {
-                continue;
-            }
-            if input_is_full && *t_len > input_len {
+            if *t_len < input_len || (input_is_full && *t_len > input_len) {
                 continue;
             }
 

@@ -325,9 +325,9 @@ fn get_last_tone_transformation(composition: &[Transformation]) -> Option<Transf
 }
 
 fn is_free(composition: &[Transformation], trans_idx: usize, effect_type: EffectType) -> bool {
-    composition.iter().all(|t| {
-        !(t.target == Some(trans_idx as u8) && t.rule.effect_type == effect_type)
-    })
+    composition
+        .iter()
+        .all(|t| !(t.target == Some(trans_idx as u8) && t.rule.effect_type == effect_type))
 }
 
 fn extract_cvc_appending_indices<'a>(
@@ -691,8 +691,7 @@ fn generate_undo_transformations(
 fn contains_uho_in_composition(composition: &[Transformation]) -> bool {
     for i in 0..composition.len() {
         let t = &composition[i];
-        if t.target.is_some() || t.rule.effect_type != EffectType::Appending || t.rule.key == '\0'
-        {
+        if t.target.is_some() || t.rule.effect_type != EffectType::Appending || t.rule.key == '\0' {
             continue;
         }
         // Get the toneless result char.
@@ -902,7 +901,9 @@ pub(crate) fn refresh_last_tone_target_into(
             .iter()
             .enumerate()
             .rev()
-            .find(|(_, t)| t.rule.effect_type == EffectType::ToneTransformation && t.target.is_some())
+            .find(|(_, t)| {
+                t.rule.effect_type == EffectType::ToneTransformation && t.target.is_some()
+            })
             .map(|(i, _)| i);
 
         (new_tone_target, last_tone_idx)

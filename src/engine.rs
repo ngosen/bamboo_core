@@ -29,6 +29,8 @@ pub struct Transformation {
     pub is_upper_case: bool,
 }
 
+const _: () = assert!(std::mem::size_of::<Transformation>() <= 28);
+
 /// A stack-allocated buffer for transformations to avoid heap allocations in the hot path.
 ///
 /// This structure uses a fixed-size array and is extremely fast for frequent updates.
@@ -481,16 +483,37 @@ impl Engine {
         let a_bytes = a.as_bytes();
         let b_bytes = b.as_bytes();
         let min_len = a_bytes.len().min(b_bytes.len());
-        // Byte-level comparison: identical UTF-8 chars have identical byte sequences.
-        // This is SIMD-friendly and avoids per-char UTF-8 decoding.
         let mut lcp_bytes = 0;
+
+        // 8-byte chunk comparison
+        while lcp_bytes + 8 <= min_len {
+            let chunk_a = u64::from_ne_bytes(a_bytes[lcp_bytes..lcp_bytes + 8].try_into().unwrap());
+            let chunk_b = u64::from_ne_bytes(b_bytes[lcp_bytes..lcp_bytes + 8].try_into().unwrap());
+            let diff = chunk_a ^ chunk_b;
+            if diff != 0 {
+                #[cfg(target_endian = "little")]
+                let mismatch_byte = (diff.trailing_zeros() / 8) as usize;
+                #[cfg(target_endian = "big")]
+                let mismatch_byte = (diff.leading_zeros() / 8) as usize;
+                lcp_bytes += mismatch_byte;
+                break;
+            }
+            lcp_bytes += 8;
+        }
+
         while lcp_bytes < min_len && a_bytes[lcp_bytes] == b_bytes[lcp_bytes] {
             lcp_bytes += 1;
         }
-        // Count chars up to the byte boundary.
-        let lcp_chars = a[..lcp_bytes].chars().count();
+
+        let prefix = &a[..lcp_bytes];
+        let lcp_chars = if prefix.is_ascii() {
+            lcp_bytes
+        } else {
+            prefix.chars().count()
+        };
         (lcp_chars, lcp_bytes)
     }
+
 
     /// Processes a single key and returns a **3-way diff** for efficient text editor updates.
     ///
@@ -663,7 +686,8 @@ impl Engine {
                 work.as_slice()
             };
             let next_id = self.dfa.add_state(cache_comp);
-            self.dfa.states[self.current_state_id as usize].set_transition(lower_key as u8, next_id);
+            self.dfa.states[self.current_state_id as usize]
+                .set_transition(lower_key as u8, next_id);
             self.current_state_id = next_id;
         } else {
             self.current_state_id = self.dfa.find_state(work.as_slice()).unwrap_or(0);
@@ -720,9 +744,7 @@ impl Engine {
             if active.is_empty() {
                 return self.committed_text.clone();
             }
-            let mut result = String::with_capacity(
-                self.committed_text.len() + active.len() * 4,
-            );
+            let mut result = String::with_capacity(self.committed_text.len() + active.len() * 4);
             result.push_str(&self.committed_text);
             crate::flattener::append_flatten_slice(active, options, &mut result);
             return result;

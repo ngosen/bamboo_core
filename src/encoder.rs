@@ -8,26 +8,29 @@ static UNICODE: &str = "Unicode";
 ///
 /// If the `charset_name` is "Unicode", it returns the input string unchanged.
 pub fn encode(charset_name: &str, input: &str) -> String {
-    if charset_name == UNICODE {
+    if charset_name == UNICODE || input.is_empty() {
         return input.to_string();
     }
-    let mut output = String::new();
 
     match get_charset_definition(charset_name) {
         Some(charset_def) => {
+            let mut output = String::with_capacity(input.len());
             for char in input.chars() {
-                match charset_def.get(&char) {
-                    Some(encoded) => output.push_str(encoded),
-                    None => output.push(char),
+                if char.is_ascii() {
+                    output.push(char);
+                } else {
+                    match charset_def.get(&char) {
+                        Some(encoded) => output.push_str(encoded),
+                        None => output.push(char),
+                    }
                 }
             }
+            output
         }
-        None => {
-            output = input.to_string();
-        }
+        None => input.to_string(),
     }
-    output
 }
+
 
 /// Returns a list of all supported character set names.
 pub fn get_charset_name() -> Vec<String> {

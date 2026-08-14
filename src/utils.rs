@@ -151,12 +151,24 @@ pub fn is_alpha(c: char) -> bool {
 
 #[inline]
 fn find_vowel_position(c: char) -> Option<usize> {
-    VOWEL_INDEX.get(&c).copied()
+    if c.is_ascii() {
+        match c {
+            'a' => Some(0),
+            'e' => Some(18),
+            'i' => Some(30),
+            'o' => Some(36),
+            'u' => Some(54),
+            'y' => Some(66),
+            _ => None,
+        }
+    } else {
+        VOWEL_INDEX.get(&c).copied()
+    }
 }
 
 #[inline]
 fn find_tone_from_char(c: char) -> u8 {
-    find_vowel_position(c).map_or(0, |pos| (pos % 6) as u8)
+    if c.is_ascii() { 0 } else { find_vowel_position(c).map_or(0, |pos| (pos % 6) as u8) }
 }
 
 /// Adds or changes the tone mark of a Vietnamese vowel.
@@ -164,6 +176,21 @@ fn find_tone_from_char(c: char) -> u8 {
 /// `tone` should be a value from 0 to 5.
 #[inline]
 pub fn add_tone_to_char(c: char, tone: u8) -> char {
+    if c.is_ascii() {
+        if tone == 0 {
+            return c;
+        }
+        let pos = match c {
+            'a' => 0,
+            'e' => 18,
+            'i' => 30,
+            'o' => 36,
+            'u' => 54,
+            'y' => 66,
+            _ => return c,
+        };
+        return VOWELS[pos + tone as usize];
+    }
     find_vowel_position(c)
         .and_then(|pos| {
             let new_pos = pos as isize + (tone as isize - (pos % 6) as isize);
@@ -175,6 +202,9 @@ pub fn add_tone_to_char(c: char, tone: u8) -> char {
 /// Adds a diacritic mark to a toneless character.
 #[inline]
 pub fn add_mark_to_toneless_char(c: char, mark: u8) -> char {
+    if mark == 0 && c.is_ascii() {
+        return c;
+    }
     MARKS_MAPS
         .get(&c)
         .and_then(|arr| arr.get(mark as usize))
@@ -196,6 +226,9 @@ pub fn add_mark_to_char(c: char, mark: u8) -> char {
 /// or a diacritic mark.
 #[inline]
 pub fn is_vietnamese_rune(c: char) -> bool {
+    if c.is_ascii() {
+        return false;
+    }
     find_tone_from_char(c) != 0 || c != add_mark_to_toneless_char(c, 0)
 }
 

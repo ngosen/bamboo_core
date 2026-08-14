@@ -15,7 +15,11 @@ fn main() {
         e.process_key(' ', Mode::Vietnamese);
         e.commit();
     }
-    println!("After 10K same misspell: dfa_states={}, arena={}", e.dfa_state_count(), e.dfa_arena_len());
+    println!(
+        "After 10K same misspell: dfa_states={}, arena={}",
+        e.dfa_state_count(),
+        e.dfa_arena_len()
+    );
     e.reset();
 
     // Test 2: 10000 UNIQUE misspelled words (worst case)
@@ -28,7 +32,11 @@ fn main() {
         e.process_key(' ', Mode::Vietnamese);
         e.commit();
     }
-    println!("After 10K unique misspell: dfa_states={}, arena={}", e.dfa_state_count(), e.dfa_arena_len());
+    println!(
+        "After 10K unique misspell: dfa_states={}, arena={}",
+        e.dfa_state_count(),
+        e.dfa_arena_len()
+    );
     e.reset();
 
     // Test 3: Mixed valid + invalid (realistic misspelling)
@@ -57,7 +65,11 @@ fn main() {
         e.process_key(' ', Mode::English);
         e.commit();
     }
-    println!("After 10K english nonsense: dfa_states={}, arena={}", e.dfa_state_count(), e.dfa_arena_len());
+    println!(
+        "After 10K english nonsense: dfa_states={}, arena={}",
+        e.dfa_state_count(),
+        e.dfa_arena_len()
+    );
 
     // Test 5: Vietnamese with random suffix (simulates typo corrections)
     println!("\n--- Test 5: Vietnamese + random suffix x5000 ---");
@@ -72,5 +84,9 @@ fn main() {
         e.process_str("xyz", Mode::Vietnamese);
         e.commit();
     }
-    println!("After 5K typo+correct: dfa_states={}, arena={}", e.dfa_state_count(), e.dfa_arena_len());
+    println!(
+        "After 5K typo+correct: dfa_states={}, arena={}",
+        e.dfa_state_count(),
+        e.dfa_arena_len()
+    );
 }

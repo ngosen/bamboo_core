@@ -14,29 +14,34 @@ const MAX_TRANS: usize = 24;
 /// and fast rejection for keys that don't have transitions.
 #[derive(Clone, Debug)]
 pub struct State {
-    /// Sorted (key, state_id) pairs. Linear scan is fine for ≤24 entries.
-    pub transitions: [(u8, u32); MAX_TRANS],
-    /// Number of valid transitions.
-    pub trans_len: u8,
     /// 128-bit bitset: bit i = 1 means key (i) has a transition.
     /// Enables O(1) rejection for keys without transitions.
     pub bitset: [u64; 2],
     /// Precomputed hash of the composition for O(1) equality check.
     pub comp_hash: u64,
+    /// Destination state IDs for transitions.
+    pub trans_states: [u32; MAX_TRANS],
     /// Start index in the DFA arena.
     pub comp_offset: u32,
+    /// Keys triggering transitions (dense, cache-friendly array).
+    pub trans_keys: [u8; MAX_TRANS],
+    /// Number of valid transitions.
+    pub trans_len: u8,
     /// Number of transformations in this state.
     pub comp_len: u8,
 }
 
+const _: () = assert!(std::mem::size_of::<State>() <= 160);
+
 impl Default for State {
     fn default() -> Self {
         Self {
-            transitions: [(0, 0); MAX_TRANS],
-            trans_len: 0,
             bitset: [0; 2],
             comp_hash: 0,
+            trans_states: [0; MAX_TRANS],
             comp_offset: 0,
+            trans_keys: [0; MAX_TRANS],
+            trans_len: 0,
             comp_len: 0,
         }
     }
@@ -51,31 +56,33 @@ impl State {
         if self.bitset[idx / 64] & (1u64 << (idx % 64)) == 0 {
             return 0;
         }
-        // Bit is set — linear scan to find the exact transition.
-        let trans = &self.transitions[..self.trans_len as usize];
-        for &(k, id) in trans {
-            if k == key {
-                return id;
+        // Bit is set — linear scan across dense u8 key array (SIMD/auto-vectorizable).
+        let len = self.trans_len as usize;
+        let keys = &self.trans_keys[..len];
+        for i in 0..len {
+            if keys[i] == key {
+                return self.trans_states[i];
             }
         }
         0
     }
 
-    /// Sets a transition, maintaining sorted order by key.
+    /// Sets a transition.
     #[inline]
     pub fn set_transition(&mut self, key: u8, state_id: u32) {
         let idx = key as usize;
         self.bitset[idx / 64] |= 1u64 << (idx % 64);
 
         let len = self.trans_len as usize;
-        for entry in self.transitions[..len].iter_mut() {
-            if entry.0 == key {
-                entry.1 = state_id;
+        for i in 0..len {
+            if self.trans_keys[i] == key {
+                self.trans_states[i] = state_id;
                 return;
             }
         }
         if len < MAX_TRANS {
-            self.transitions[len] = (key, state_id);
+            self.trans_keys[len] = key;
+            self.trans_states[len] = state_id;
             self.trans_len += 1;
         }
     }
@@ -160,12 +167,7 @@ impl Dfa {
         let comp_len = composition.len() as u8;
 
         self.arena.extend_from_slice(composition);
-        self.states.push(State {
-            comp_hash: hash,
-            comp_offset,
-            comp_len,
-            ..State::default()
-        });
+        self.states.push(State { comp_hash: hash, comp_offset, comp_len, ..State::default() });
 
         self.hash_to_state.insert(hash, id);
         id
@@ -217,9 +219,18 @@ impl<'a> DfaCompiler<'a> {
             for &v in &vowels {
                 for &t in &tones {
                     let mut pos = 0;
-                    for &b in f.as_bytes() { buf[pos] = b; pos += 1; }
-                    for &b in v.as_bytes() { buf[pos] = b; pos += 1; }
-                    for &b in t.as_bytes() { buf[pos] = b; pos += 1; }
+                    for &b in f.as_bytes() {
+                        buf[pos] = b;
+                        pos += 1;
+                    }
+                    for &b in v.as_bytes() {
+                        buf[pos] = b;
+                        pos += 1;
+                    }
+                    for &b in t.as_bytes() {
+                        buf[pos] = b;
+                        pos += 1;
+                    }
                     // SAFETY: all parts are ASCII
                     let seq = unsafe { std::str::from_utf8_unchecked(&buf[..pos]) };
                     self.simulate_str(seq);

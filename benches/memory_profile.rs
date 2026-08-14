@@ -166,10 +166,26 @@ fn test_ram_growth() {
     println!("{}", "-".repeat(72));
 
     let words = [
-        "tieengs", "vietj", "huowng", "quoocs", "nguwowif",
-        "namf", "chuyeenn", "thuyeet", "truwowjt", "nghieengs",
-        "hoas", "khongf", "duowcj", "nhuwngf", "moiw",
-        "laaj", "tuoif", "troiwf", "doocs", "muaws",
+        "tieengs",
+        "vietj",
+        "huowng",
+        "quoocs",
+        "nguwowif",
+        "namf",
+        "chuyeenn",
+        "thuyeet",
+        "truwowjt",
+        "nghieengs",
+        "hoas",
+        "khongf",
+        "duowcj",
+        "nhuwngf",
+        "moiw",
+        "laaj",
+        "tuoif",
+        "troiwf",
+        "doocs",
+        "muaws",
     ];
 
     for &word_count in &[10usize, 100, 1000, 5000, 10000] {
@@ -535,8 +551,14 @@ fn test_dfa_saturation() {
     println!("=== 11. DFA saturation — 50,000 unique Vietnamese words ===");
 
     let mut words = Vec::new();
-    let prefixes = ["", "b", "c", "ch", "d", "g", "h", "k", "kh", "l", "m", "n", "ng", "ngh", "nh", "p", "ph", "q", "r", "s", "t", "th", "tr", "v", "x"];
-    let vowels = ["a", "e", "i", "o", "u", "aa", "ee", "oo", "aw", "ow", "uw", "ai", "ao", "au", "ay", "ie", "oa", "oe", "oi", "ua", "ue", "ui", "uo", "uy"];
+    let prefixes = [
+        "", "b", "c", "ch", "d", "g", "h", "k", "kh", "l", "m", "n", "ng", "ngh", "nh", "p", "ph",
+        "q", "r", "s", "t", "th", "tr", "v", "x",
+    ];
+    let vowels = [
+        "a", "e", "i", "o", "u", "aa", "ee", "oo", "aw", "ow", "uw", "ai", "ao", "au", "ay", "ie",
+        "oa", "oe", "oi", "ua", "ue", "ui", "uo", "uy",
+    ];
     let tones = ["", "s", "f", "r", "x", "j"];
 
     for p in &prefixes {
@@ -569,7 +591,8 @@ fn test_dfa_saturation() {
         if checkpoints.contains(&(i + 1)) {
             let now = snapshot();
             let heap = now.0 as isize - after_warmup.0 as isize;
-            let arena_bytes = e.dfa_arena_len() * std::mem::size_of::<bamboo_core::Transformation>();
+            let arena_bytes =
+                e.dfa_arena_len() * std::mem::size_of::<bamboo_core::Transformation>();
             println!(
                 "{:<12} {:>12} {:>12} {:>15} {:>15}",
                 i + 1,
