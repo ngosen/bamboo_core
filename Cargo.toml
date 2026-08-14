@@ -24,12 +24,15 @@ include = [
 [dependencies]
 bitflags = "2.11.1"
 phf = { version = "0.13.1", features = ["macros"] }
+rayon = { version = "1.10", optional = true }
 rustc-hash = "2"
 wasm-bindgen = { version = "0.2", optional = true }
 
 [features]
 default = []
+parallel = ["rayon"]
 wasm = ["wasm-bindgen"]
+
 
 [[bench]]
 name = "engine_bench"

@@ -131,6 +131,39 @@ mod utils;
 pub mod ffi;
 pub mod wasm;
 
+/// Parallel batch processing utilities for bulk Vietnamese text transformations.
+///
+/// Available when the `parallel` feature is enabled.
+#[cfg(feature = "parallel")]
+pub mod parallel {
+    use rayon::prelude::*;
+    use crate::{Engine, InputMethod, Mode};
+
+    /// Processes multiple input strings in parallel using Rayon work-stealing.
+    ///
+    /// # Example
+    /// ```rust
+    /// use bamboo_core::{parallel::process_batch, Mode, InputMethod};
+    ///
+    /// let inputs = vec!["tieengs", "vieetj", "nam"];
+    /// let results = process_batch(&inputs, &InputMethod::telex(), Mode::Vietnamese);
+    /// assert_eq!(results, vec!["tiếng", "việt", "nam"]);
+    /// ```
+    pub fn process_batch<S: AsRef<str> + Sync>(
+        inputs: &[S],
+        input_method: &InputMethod,
+        mode: Mode,
+    ) -> Vec<String> {
+        inputs
+            .par_iter()
+            .map(|s| {
+                let mut engine = Engine::new(input_method.clone());
+                engine.process(s.as_ref(), mode)
+            })
+            .collect()
+    }
+}
+
 pub use config::Config;
 pub use engine::{Engine, Transformation, TransformationStack};
 pub use input_method::InputMethod;
@@ -150,3 +183,4 @@ pub mod advanced {
     pub use crate::encoder::{encode, get_charset_name, get_charset_names};
     pub use crate::input_method_def::{get_input_method, get_input_method_definitions};
 }
+
