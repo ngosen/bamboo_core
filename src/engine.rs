@@ -506,14 +506,9 @@ impl Engine {
         }
 
         let prefix = &a[..lcp_bytes];
-        let lcp_chars = if prefix.is_ascii() {
-            lcp_bytes
-        } else {
-            prefix.chars().count()
-        };
+        let lcp_chars = if prefix.is_ascii() { lcp_bytes } else { prefix.chars().count() };
         (lcp_chars, lcp_bytes)
     }
-
 
     /// Processes a single key and returns a **3-way diff** for efficient text editor updates.
     ///

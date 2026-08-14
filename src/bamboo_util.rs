@@ -34,9 +34,17 @@ fn raw_keys_of(trans_slice: &[Transformation], out: &mut [char; 4]) -> usize {
     len
 }
 
-/// Finds the last transformation in the composition that resulted in an appended character.
-pub(crate) fn find_last_appending_trans(composition: &[Transformation]) -> Option<Transformation> {
-    composition.iter().rev().find(|trans| trans.rule.effect_type == EffectType::Appending).copied()
+/// Finds the last transformation in the composition that resulted in an appended character with its index.
+#[inline]
+pub(crate) fn find_last_appending_entry(
+    composition: &[Transformation],
+) -> Option<(u8, Transformation)> {
+    composition
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, trans)| trans.rule.effect_type == EffectType::Appending)
+        .map(|(i, &t)| (i as u8, t))
 }
 
 /// Creates a new transformation that simply appends a character.
@@ -592,10 +600,10 @@ pub(crate) fn find_target(
             if has_valid_tone(composition, tone) {
                 target = find_tone_target(composition, (flags & ESTD_TONE_STYLE) != 0);
             }
-        } else if let Some(last_appending) = find_last_appending_trans(composition)
+        } else if let Some((idx, last_appending)) = find_last_appending_entry(composition)
             && is_vowel(last_appending.rule.effect_on)
         {
-            target = composition.iter().position(|t| *t == last_appending).map(|v| v as u8);
+            target = Some(idx);
         }
 
         let Some(t_idx) = target else { continue };
@@ -634,10 +642,10 @@ fn generate_undo_transformations(
                 if has_valid_tone(composition, tone) {
                     target = find_tone_target(composition, (flags & ESTD_TONE_STYLE) != 0);
                 }
-            } else if let Some(last_appending) = find_last_appending_trans(composition)
+            } else if let Some((idx, last_appending)) = find_last_appending_entry(composition)
                 && is_vowel(last_appending.rule.effect_on)
             {
-                target = composition.iter().position(|t| *t == last_appending).map(|v| v as u8);
+                target = Some(idx);
             }
 
             let Some(target) = target else { continue };
