@@ -1,7 +1,8 @@
 [package]
 name = "bamboo-core"
-version = "0.3.17"
+version = "0.3.18"
 edition = "2024"
+
 
 description = "Vietnamese input method engine written in Rust"
 license = "MIT"
@@ -15,11 +16,13 @@ categories = ["text-processing"]
 include = [
     "src/**",
     "tests/**",
+    "benches/**",
     "Cargo.toml",
     "README.md",
     "LICENSE",
     "CHANGELOG.md"
 ]
+
 
 [dependencies]
 bitflags = "2.11.1"

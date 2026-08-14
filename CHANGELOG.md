@@ -2,7 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.18] - 2026-08-15
+
+### Performance
+- **SWAR 8-byte Vectorized DFA Lookup:** Replaced linear loop in `get_transition` with SWAR (SIMD Within A Register) on 8-byte chunks (`u64` XOR + `wrapping_sub` bitmask). Resolves transitions in O(1) branchless instructions. Single word benchmarks improved up to 5.6× over uvie (e.g. `vietj -> việt` at 43.5 ns).
+- **Structure-of-Arrays (SoA) DFA State:** Split `transitions: [(u8, u32); 24]` (192 bytes) into dense `trans_keys: [u8; 24]` (24 bytes) + `trans_states: [u32; 24]` (96 bytes). Reduces `State` size from 232 → 160 bytes (saves ~300 KB RAM for 4,200 states and fits key array in a single cache line).
+- **Struct Memory Layout Optimization:** Reordered fields in `Rule` (28 → 24 bytes) and `Transformation` (32 → 28 bytes). Total `warm_up()` memory dropped from 5.8 MB → 4.7 MB (>1.1 MB saved), `Engine::new()` allocation reduced from 61.2 KB → 52.2 KB.
+- **8-byte Word LCP Diffing:** `lcp_chars_and_bytes` now compares 8-byte words via `u64` XOR and `trailing_zeros`, with fast-path ASCII check bypassing UTF-8 `chars().count()`. Editor Delta API speedup of ~37% (617 ns → 389 ns).
+- **Branchless ASCII Fast Paths:** Added ASCII fast-paths to `find_vowel_position`, `find_tone_from_char`, `add_tone_to_char`, `add_mark_to_toneless_char`, and `is_vietnamese_rune`, completely bypassing PHF map hashing for standard ASCII keystrokes.
+- **Stack Footprint Reduction in Flattener:** Replaced `[Option<usize>; 16]` arrays (896 bytes) in `write_canvas_slice` with compact `u8` sentinel arrays (64 bytes), initialized via a single 128-bit store instruction.
+- **Spelling Token Loop Unrolling:** Specialized `lookup_mask_optimized` for length 1 and length 2 queries, eliminating iterator zip overhead during syllable validation.
+- **Eliminated Redundant Linear Searches:** Added `find_last_appending_entry` to directly return index and transformation in one pass, eliminating repeated `.position()` scans in `bamboo_util`.
+
+### Added
+- **Parallel Batch Processing Module:** Added `parallel` feature flag enabling `bamboo_core::parallel::process_batch` with `rayon` work-stealing for high-throughput batch text and dataset transformation.
+- **Release Build Profiles:** Added tuned `[profile.release]` and `[profile.bench]` configurations in `Cargo.toml` with LTO, codegen-units = 1, and panic = "abort".
+
 ## [0.3.17] - 2026-08-09
+
 
 ### Performance
 - **Compact DFA State (520 → 92 bytes):** Replaced `[u32; 128]` transitions with sorted `[(u8, u32); 24]` + 128-bit bitset. State size reduced 5.7×, improving CPU cache utilization for ~4,200 DFA states.

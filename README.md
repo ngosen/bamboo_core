@@ -10,6 +10,8 @@ A high-performance Vietnamese input method engine (IME) core written in Rust, po
 
 - **Telex, VNI, VIQR** input methods with custom input method support
 - **Hybrid engine**: Rule-based transformations + Lazy JIT DFA caching
+- **SWAR / Vectorized matching**: Branchless 8-byte word lookups for transition routing
+- **Parallel batch processing**: Rayon-powered work-stealing for bulk text processing (`parallel` feature)
 - **Zero heap allocation** in core processing path (stack-allocated buffers)
 - **O(1) backspace** via snapshot stack
 - **O(N) single-pass** spelling validation
@@ -19,8 +21,9 @@ A high-performance Vietnamese input method engine (IME) core written in Rust, po
 
 ```toml
 [dependencies]
-bamboo-core = "0.3.17"
+bamboo-core = "0.3.18"
 ```
+
 
 ## Quick Start
 
