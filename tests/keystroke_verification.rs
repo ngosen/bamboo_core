@@ -45,6 +45,29 @@ fn test_vni_truong_keystrokes() {
 }
 
 #[test]
+fn test_telex_non_adjacent_repeated_tone_keys() {
+    // Regression: non-adjacent repeated tone keys must override the earlier
+    // ones instead of falling back to undo + literal key (bamboo "looixfsx").
+    verify_keystrokes(
+        InputMethod::telex(),
+        "looixfsx",
+        &["l", "lo", "lô", "lôi", "lỗi", "lồi", "lối", "lỗi"],
+    );
+    verify_keystrokes(InputMethod::telex(), "loixfx", &["l", "lo", "loi", "lõi", "lòi", "lõi"]);
+    verify_keystrokes(InputMethod::telex(), "asfsx", &["a", "á", "à", "á", "ã"]);
+}
+
+#[test]
+fn test_telex_adjacent_tone_key_undo() {
+    // Adjacent duplicate tone keys are intentional undo patterns: the tone is
+    // removed and the key is typed as a literal letter.
+    verify_keystrokes(InputMethod::telex(), "ass", &["a", "á", "as"]);
+    verify_keystrokes(InputMethod::telex(), "loiss", &["l", "lo", "loi", "lói", "lois"]);
+    verify_keystrokes(InputMethod::telex(), "loiff", &["l", "lo", "loi", "lòi", "loif"]);
+    verify_keystrokes(InputMethod::telex(), "loixx", &["l", "lo", "loi", "lõi", "loix"]);
+}
+
+#[test]
 fn test_backspace_logic() {
     let mut engine = Engine::new(InputMethod::telex());
     engine.process_str("tieen", Mode::Vietnamese);

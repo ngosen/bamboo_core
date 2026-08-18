@@ -501,11 +501,26 @@ pub(crate) fn extract_last_word<'a>(
 }
 
 fn is_effective(composition: &[Transformation], target_idx: usize, new_rule: &Rule) -> bool {
-    for t in composition {
+    // Undo pattern: the same tone/mark key pressed twice in a row on the same
+    // target (e.g., "ss", "xx"). Deliberately left "not effective" so the
+    // caller falls back to undo + literal key.
+    if let Some(last) = composition.last()
+        && last.target == Some(target_idx as u8)
+        && last.rule.effect_type == new_rule.effect_type
+        && last.rule.effect == new_rule.effect
+        && last.rule.key != '\0'
+        && last.rule.key == new_rule.key
+    {
+        return false;
+    }
+
+    // Otherwise the latest transformation of the same effect type targeting
+    // this character determines its net effect. Earlier transformations have
+    // already been overridden by later ones, so a new rule is always applied
+    // on top (e.g., "looixfsx": the final 'x' must re-apply tilde even though
+    // a stale tilde from before still exists in the composition).
+    for t in composition.iter().rev() {
         if t.target == Some(target_idx as u8) && t.rule.effect_type == new_rule.effect_type {
-            if t.rule.effect == new_rule.effect {
-                return false;
-            }
             return true;
         }
     }
