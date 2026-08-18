@@ -589,6 +589,11 @@ impl Engine {
     /// Processes a single character.
     ///
     /// The `mode` determines whether to apply Vietnamese transformation rules.
+    ///
+    /// Tone keys always override the previous tone on the same vowel (the last
+    /// tone key wins, e.g. `looixfsx` → `lỗi`). Typing the same tone key twice
+    /// in a row undoes the tone and types the key as a literal letter
+    /// (e.g. `ass` → `as`).
     pub fn process_key(&mut self, key: char, mode: Mode) {
         let lower_key = lower(key);
         let is_upper_case = is_upper(key);

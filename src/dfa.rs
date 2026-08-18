@@ -100,7 +100,6 @@ impl State {
         0
     }
 
-
     /// Sets a transition.
     #[inline]
     pub fn set_transition(&mut self, key: u8, state_id: u32) {

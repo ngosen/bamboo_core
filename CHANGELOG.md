@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.19] - 2026-08-18
+
+### Fixed
+- **Non-adjacent repeated tone keys (`looixfsx`):** `is_effective` now compares against the latest transformation of the same effect type on the target character instead of the first match. A new tone key always overrides the previous tone, so `looixfsx` → `lỗi` and `loixfx` → `lõi` (previously the stale first match made the engine fall back to undo + literal key: `lôix`).
+- **Adjacent duplicate tone keys preserved as undo:** Typing the same tone key twice in a row (`ss`, `xx`, ...) still removes the tone and types the key literally (`ass` → `as`, `loiss` → `lois`).
+
+### Added
+- Keystroke regression tests: `test_telex_non_adjacent_repeated_tone_keys` and `test_telex_adjacent_tone_key_undo` in `tests/keystroke_verification.rs`.
+- New `benches/vi_bench.rs` benchmark comparing against `skey-engine`, `uvie`, and `vi` crates.
+
+### Docs
+- Added "Tone Key Semantics" section to crate docs and README.
+- Documented tone key override/undo behavior on `Engine::process_key`.
+
 ## [0.3.18] - 2026-08-15
 
 ### Performance

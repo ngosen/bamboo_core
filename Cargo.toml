@@ -1,6 +1,6 @@
 [package]
 name = "bamboo-core"
-version = "0.3.18"
+version = "0.3.19"
 edition = "2024"
 
 
@@ -53,10 +53,18 @@ harness = false
 name = "dfa_misspell_test"
 harness = false
 
+[[bench]]
+name = "vi_bench"
+harness = false
+
 [dev-dependencies]
+skey-engine = "0.1.4"
 uvie = "2.1.1"
+vi = "0.8.0"
 
 [profile.release]
+
+
 opt-level = 3
 lto = "fat"
 codegen-units = 1

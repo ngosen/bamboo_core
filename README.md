@@ -21,7 +21,7 @@ A high-performance Vietnamese input method engine (IME) core written in Rust, po
 
 ```toml
 [dependencies]
-bamboo-core = "0.3.18"
+bamboo-core = "0.3.19"
 ```
 
 
@@ -38,6 +38,27 @@ assert_eq!(word, "tiếng");
 engine.reset();
 let word2 = engine.process("vieetj", Mode::Vietnamese);
 assert_eq!(word2, "việt");
+```
+
+## Tone Key Semantics
+
+In Telex, a new tone key always replaces the previous tone on the same vowel —
+the last tone key wins, even when tone keys are interleaved with letters or
+other tone keys:
+
+```rust
+use bamboo_core::{Engine, Mode, InputMethod};
+
+let mut engine = Engine::new(InputMethod::telex());
+assert_eq!(engine.process("looixfsx", Mode::Vietnamese), "lỗi");
+```
+
+Typing the same tone key twice in a row is an intentional undo: the tone is
+removed and the key is typed as a literal letter.
+
+```rust
+let mut engine = Engine::new(InputMethod::telex());
+assert_eq!(engine.process("ass", Mode::Vietnamese), "as");
 ```
 
 ## Incremental Processing

@@ -114,6 +114,24 @@
 //!
 //! assert_eq!(engine.get_processed_str(OutputOptions::TONE_LESS), "Trăng");
 //! ```
+//!
+//! ## Tone Key Semantics
+//!
+//! A new tone key always replaces the previous tone on the same vowel — the
+//! last tone key wins, even when interleaved with other tone keys
+//! (`looixfsx` → `lỗi`). Typing the same tone key twice in a row is an
+//! intentional undo: the tone is removed and the key is typed as a literal
+//! letter (`ass` → `as`).
+//!
+//! ```rust
+//! use bamboo_core::{Engine, Mode, InputMethod};
+//!
+//! let mut engine = Engine::new(InputMethod::telex());
+//! assert_eq!(engine.process("looixfsx", Mode::Vietnamese), "lỗi");
+//!
+//! engine.reset();
+//! assert_eq!(engine.process("ass", Mode::Vietnamese), "as");
+//! ```
 
 mod bamboo_util;
 mod charset_def;
@@ -136,8 +154,8 @@ pub mod wasm;
 /// Available when the `parallel` feature is enabled.
 #[cfg(feature = "parallel")]
 pub mod parallel {
-    use rayon::prelude::*;
     use crate::{Engine, InputMethod, Mode};
+    use rayon::prelude::*;
 
     /// Processes multiple input strings in parallel using Rayon work-stealing.
     ///
@@ -183,4 +201,3 @@ pub mod advanced {
     pub use crate::encoder::{encode, get_charset_name, get_charset_names};
     pub use crate::input_method_def::{get_input_method, get_input_method_definitions};
 }
-
