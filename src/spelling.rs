@@ -128,9 +128,9 @@ static LC_4: &[Token] = &[(['c', '\0', '\0', '\0'], 1)];
 static LC_ROWS: &[&[Token]] = &[LC_0, LC_1, LC_2, LC_3, LC_4];
 
 const CV_ALLOWED_MASKS: [u16; 5] = [
-    (1 << 0) | (1 << 1) | (1 << 2) | (1 << 5),
+    (1 << 0) | (1 << 1) | (1 << 2) | (1 << 4) | (1 << 5),
     (1 << 0) | (1 << 1) | (1 << 2) | (1 << 3) | (1 << 4) | (1 << 5),
-    (1 << 0) | (1 << 1) | (1 << 2) | (1 << 3) | (1 << 5),
+    (1 << 0) | (1 << 1) | (1 << 2) | (1 << 3) | (1 << 4) | (1 << 5),
     1 << 6,
     1 << 7,
 ];
@@ -140,12 +140,13 @@ const VC_ALLOWED_MASKS: [u16; 8] = [
     (1 << 0) | (1 << 1) | (1 << 2),
     (1 << 1) | (1 << 2),
     (1 << 1) | (1 << 2),
-    0,
+    (1 << 1) | (1 << 2) | (1 << 4),
     0,
     1 << 3,
     1 << 4,
 ];
 
+#[inline(always)]
 fn lookup_mask_optimized(
     rows: &[&[Token]],
     input: &[char],
@@ -220,6 +221,7 @@ fn lookup_mask_optimized(
     ret
 }
 
+#[inline(always)]
 fn is_valid_cv(fc_mask: u16, vo_mask: u16) -> bool {
     let mut mask = fc_mask;
     while mask != 0 {
@@ -232,6 +234,7 @@ fn is_valid_cv(fc_mask: u16, vo_mask: u16) -> bool {
     false
 }
 
+#[inline(always)]
 fn is_valid_vc(vo_mask: u16, lc_mask: u16) -> bool {
     let mut mask = vo_mask;
     while mask != 0 {
@@ -309,7 +312,15 @@ pub fn is_valid_cvc_chars(fc: &[char], vo: &[char], lc: &[char], full: bool) -> 
     };
 
     if vo_mask == 0 {
-        return fc_mask != 0;
+        if fc_mask != 0 {
+            return true;
+        }
+        // Consonant abbreviations containing 'đ' (e.g., "đc", "vcđ", "cđ", "bcđ", "nđm", "ađ")
+        if fc.iter().any(|&c| matches!(c, 'đ' | 'Đ')) || lc.iter().any(|&c| matches!(c, 'đ' | 'Đ'))
+        {
+            return true;
+        }
+        return false;
     }
 
     if fc_mask != 0 {

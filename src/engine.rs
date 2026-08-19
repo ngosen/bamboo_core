@@ -1,7 +1,7 @@
 //! The core engine that processes keypresses and maintains the IME state.
 
 use crate::config::Config;
-use crate::input_method::{EffectType, InputMethod, Rule};
+use crate::input_method::{EffectType, InputMethod, Mark, Rule};
 use crate::mode::{Mode, OutputOptions};
 use crate::utils::{is_upper, lower};
 
@@ -14,6 +14,7 @@ struct Snapshot {
     active_buffer: [Transformation; MAX_ACTIVE_TRANS],
     active_len: usize,
     current_state_id: u32,
+    english_bypass: bool,
 }
 
 /// Represents a single keypress or a transformation derived from it (e.g., adding a mark or tone).
@@ -141,7 +142,7 @@ pub struct Engine {
     non_ascii_effect_keys: Vec<char>,
     config: Config,
 
-    // Stack buffers to avoid per-keystroke heap allocations.
+    /// Stack buffers to avoid per-keystroke heap allocations.
     work_comp: TransformationStack,
     scratch_comp: TransformationStack,
 
@@ -151,12 +152,13 @@ pub struct Engine {
     dfa: crate::dfa::Dfa,
     current_state_id: u32,
 
-    // Snapshot stack for O(1) backspace — all stack-allocated, zero heap.
+    /// Snapshot stack for O(1) backspace — all stack-allocated, zero heap.
     snapshots: [Snapshot; MAX_ACTIVE_TRANS],
     snapshot_len: usize,
 
-    // Lazily-initialized scratch engine for restore_last_word to avoid repeated with_config.
+    /// Lazily-initialized scratch engine for restore_last_word to avoid repeated with_config.
     scratch_engine: Option<Box<Engine>>,
+    english_bypass: bool,
 }
 
 impl Engine {
@@ -226,9 +228,11 @@ impl Engine {
                 active_buffer: [Transformation::default(); MAX_ACTIVE_TRANS],
                 active_len: 0,
                 current_state_id: 0,
+                english_bypass: false,
             }; MAX_ACTIVE_TRANS],
             snapshot_len: 0,
             scratch_engine: None,
+            english_bypass: false,
         }
     }
 
@@ -257,6 +261,7 @@ impl Engine {
                 .copy_from_slice(&self.active_buffer[..self.active_len]);
             snap.active_len = self.active_len;
             snap.current_state_id = self.current_state_id;
+            snap.english_bypass = self.english_bypass;
             self.snapshot_len += 1;
         }
     }
@@ -272,6 +277,7 @@ impl Engine {
         self.active_buffer[..self.active_len]
             .copy_from_slice(&snap.active_buffer[..self.active_len]);
         self.current_state_id = snap.current_state_id;
+        self.english_bypass = snap.english_bypass;
         Some(())
     }
 
@@ -343,7 +349,7 @@ impl Engine {
         composition: &mut TransformationStack,
         key: char,
         is_upper_case: bool,
-    ) {
+    ) -> bool {
         let lower_key = lower(key);
         let mut trans_buf = TransformationStack::new();
 
@@ -394,36 +400,46 @@ impl Engine {
                 }
             }
         }
+
+        let has_undo = trans_buf.as_slice().iter().any(|t| {
+            t.target.is_some()
+                && ((t.rule.effect_type == EffectType::ToneTransformation && t.rule.effect == 0)
+                    || (t.rule.effect_type == EffectType::MarkTransformation
+                        && (t.rule.effect == 0 || t.rule.effect == Mark::Raw as u8)))
+        });
+
         composition.extend_from_slice(trans_buf.as_slice());
         if self.config.to_flags() & crate::bamboo_util::EFREE_TONE_MARKING != 0
             && self.is_valid_internal(composition.as_slice(), false)
         {
-            let mut extra = TransformationStack::new();
             crate::bamboo_util::refresh_last_tone_target_into(
                 composition.as_mut_slice(),
                 self.config.to_flags() & crate::bamboo_util::ESTD_TONE_STYLE != 0,
-                &mut extra,
             );
-            composition.extend_from_slice(extra.as_slice());
         }
+        has_undo
     }
 
     fn last_syllable_start(composition: &[Transformation]) -> usize {
         let mut idx = composition.len();
-        let mut last_is_vowel = false;
         let mut found_vowel = false;
+        let mut onset_count = 0;
 
         while idx > 0 {
             let tmp = &composition[idx - 1];
             if tmp.target.is_none() {
                 let is_v = crate::utils::is_vowel(tmp.rule.result);
-                if found_vowel && !is_v && !last_is_vowel {
-                    break;
-                }
                 if is_v {
+                    if found_vowel && onset_count > 0 {
+                        break;
+                    }
                     found_vowel = true;
+                } else if found_vowel {
+                    onset_count += 1;
+                    if onset_count > 3 {
+                        break;
+                    }
                 }
-                last_is_vowel = is_v;
             }
             idx -= 1;
         }
@@ -437,7 +453,7 @@ impl Engine {
         scratch: &mut TransformationStack,
         key: char,
         is_upper_case: bool,
-    ) {
+    ) -> bool {
         let syllable_abs_start = Self::last_syllable_start(composition.as_slice());
 
         composition.drain_to(syllable_abs_start, scratch);
@@ -451,7 +467,7 @@ impl Engine {
             }
         }
 
-        self.generate_transformations(scratch, key, is_upper_case);
+        let has_undo = self.generate_transformations(scratch, key, is_upper_case);
 
         if offset != 0 {
             for t in scratch.as_mut_slice().iter_mut() {
@@ -462,6 +478,7 @@ impl Engine {
         }
 
         composition.extend_from_slice(scratch.as_slice());
+        has_undo
     }
 
     /// Processes a string of characters and returns the resulting active word.
@@ -505,8 +522,16 @@ impl Engine {
             lcp_bytes += 1;
         }
 
+        while lcp_bytes > 0 && !a.is_char_boundary(lcp_bytes) {
+            lcp_bytes -= 1;
+        }
+
         let prefix = &a[..lcp_bytes];
-        let lcp_chars = if prefix.is_ascii() { lcp_bytes } else { prefix.chars().count() };
+        let lcp_chars = if prefix.is_ascii() {
+            lcp_bytes
+        } else {
+            prefix.as_bytes().iter().filter(|&&b| (b & 0xC0) != 0x80).count()
+        };
         (lcp_chars, lcp_bytes)
     }
 
@@ -598,14 +623,17 @@ impl Engine {
         let lower_key = lower(key);
         let is_upper_case = is_upper(key);
 
-        // English mode: skip all Vietnamese processing.
-        // Direct buffer append — no DFA lookup, no snapshot.
-        if mode == Mode::English {
+        // English mode or English bypass active: skip all Vietnamese processing.
+        // Direct buffer append — no DFA lookup, snapshot saved for backspace.
+        if mode == Mode::English || self.english_bypass {
             if crate::utils::is_word_break_symbol(lower_key) && self.active_len > 0 {
                 self.commit();
             }
             if self.active_len >= MAX_ACTIVE_TRANS {
                 self.commit();
+            }
+            if mode != Mode::English && self.active_len > 0 {
+                self.push_snapshot();
             }
             self.active_buffer[self.active_len] =
                 crate::bamboo_util::new_appending_trans(lower_key, is_upper_case);
@@ -628,14 +656,32 @@ impl Engine {
                 if self.active_len > 0 {
                     self.push_snapshot();
                 }
+                let prev_len = self.active_len;
+                let has_prev_upper = self.active_buffer[..prev_len].iter().any(|t| t.is_upper_case);
+                let mut prev_upper = [false; MAX_ACTIVE_TRANS];
+                if has_prev_upper {
+                    for (dst, src) in prev_upper.iter_mut().zip(&self.active_buffer[..prev_len]) {
+                        *dst = src.is_upper_case;
+                    }
+                }
+
                 self.current_state_id = next_state_id;
                 let comp = self.dfa.get_composition(next_state_id);
                 self.active_len = comp.len().min(MAX_ACTIVE_TRANS);
                 self.active_buffer[..self.active_len].copy_from_slice(comp);
-                // Restore uppercase flag on first transformation if original key was uppercase.
-                // DFA stores lowercase compositions; we adjust case at output time.
-                if is_upper_case && self.active_len > 0 {
-                    self.active_buffer[0].is_upper_case = true;
+
+                if has_prev_upper {
+                    for (dst, &is_up) in self.active_buffer[..prev_len.min(self.active_len)]
+                        .iter_mut()
+                        .zip(&prev_upper)
+                    {
+                        dst.is_upper_case = is_up;
+                    }
+                }
+                if is_upper_case {
+                    for t in &mut self.active_buffer[prev_len..self.active_len] {
+                        t.is_upper_case = true;
+                    }
                 }
                 return;
             }
@@ -668,18 +714,49 @@ impl Engine {
         let mut scratch = self.scratch_comp;
 
         self.take_active_into(&mut work);
-        self.new_composition_in_place(&mut work, &mut scratch, lower_key, is_upper_case);
+        let has_undo =
+            self.new_composition_in_place(&mut work, &mut scratch, lower_key, is_upper_case);
+        if has_undo {
+            self.english_bypass = true;
+            // P5 tone strip: remove all tone marks when bypass is triggered by undo
+            for t in work.as_mut_slice() {
+                if t.rule.effect_type == EffectType::ToneTransformation {
+                    t.rule.effect = 0;
+                }
+            }
+        }
+
+        // Real-time Auto-restore when auto_correct is enabled:
+        if !has_undo && self.config.auto_correct {
+            let has_transforms = work
+                .as_slice()
+                .iter()
+                .any(|t| t.target.is_some() || (t.rule.key != '\0' && t.rule.result != t.rule.key));
+
+            if has_transforms && !self.is_valid_internal(work.as_slice(), false) {
+                let raw_comp = crate::bamboo_util::break_composition_slice(work.as_slice());
+                let raw_len = work
+                    .as_slice()
+                    .iter()
+                    .filter(|t| t.rule.key != '\0')
+                    .count()
+                    .min(MAX_ACTIVE_TRANS);
+                work.clear();
+                work.extend_from_slice(&raw_comp[..raw_len]);
+                self.english_bypass = true;
+            }
+        }
 
         // Try to update DFA (Lazy JIT).
         // Always cache using lowercase key so uppercase keys reuse the same DFA transitions.
-        if lower_key.is_ascii() && work.len() <= MAX_ACTIVE_TRANS {
+        if !self.english_bypass && lower_key.is_ascii() && work.len() <= MAX_ACTIVE_TRANS {
             // For uppercase: create a lowercase copy of the composition for DFA caching.
             // This ensures both 'a' and 'A' share the same DFA transition from the same state.
-            let cache_comp: &[Transformation] = if is_upper_case {
+            let cache_comp = if work.as_slice().iter().any(|t| t.is_upper_case) {
                 self.scratch_comp.clear();
                 self.scratch_comp.extend_from_slice(work.as_slice());
-                if !self.scratch_comp.is_empty() {
-                    self.scratch_comp.as_mut_slice()[0].is_upper_case = false;
+                for t in self.scratch_comp.as_mut_slice() {
+                    t.is_upper_case = false;
                 }
                 self.scratch_comp.as_slice()
             } else {
@@ -728,6 +805,7 @@ impl Engine {
         );
         self.current_state_id = 0;
         self.snapshot_len = 0;
+        self.english_bypass = false;
     }
 
     /// Returns the currently active syllable as a string.
@@ -835,19 +913,10 @@ impl Engine {
         }
 
         if refresh_last_tone_target && self.active_len > 0 {
-            let mut extra = TransformationStack::new();
             crate::bamboo_util::refresh_last_tone_target_into(
                 &mut self.active_buffer[..self.active_len],
                 self.config.to_flags() & crate::bamboo_util::ESTD_TONE_STYLE != 0,
-                &mut extra,
             );
-            let available = MAX_ACTIVE_TRANS - self.active_len;
-            let to_copy = extra.len().min(available);
-            if to_copy > 0 {
-                self.active_buffer[self.active_len..self.active_len + to_copy]
-                    .copy_from_slice(&extra.as_slice()[..to_copy]);
-                self.active_len += to_copy;
-            }
         }
     }
 
@@ -886,19 +955,10 @@ impl Engine {
         self.current_state_id = 0;
 
         if self.active_len > 0 {
-            let mut extra = TransformationStack::new();
             crate::bamboo_util::refresh_last_tone_target_into(
                 &mut self.active_buffer[..self.active_len],
                 self.config.to_flags() & crate::bamboo_util::ESTD_TONE_STYLE != 0,
-                &mut extra,
             );
-            let available = MAX_ACTIVE_TRANS - self.active_len;
-            let to_copy = extra.len().min(available);
-            if to_copy > 0 {
-                self.active_buffer[self.active_len..self.active_len + to_copy]
-                    .copy_from_slice(&extra.as_slice()[..to_copy]);
-                self.active_len += to_copy;
-            }
         }
     }
 
@@ -910,6 +970,7 @@ impl Engine {
         self.delta_buf.clear();
         self.current_state_id = 0;
         self.snapshot_len = 0;
+        self.english_bypass = false;
     }
 
     /// Returns the number of DFA states currently cached.
@@ -946,6 +1007,13 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_luoojcw() {
+        let mut e = Engine::new(InputMethod::telex());
+        e.process_str("luoojcw", Mode::Vietnamese);
+        assert_eq!(e.output(), "lược");
+    }
 
     #[test]
     fn delta_backspaces_and_inserted() {
@@ -1066,9 +1134,8 @@ mod tests {
         assert_eq!(e.output(), "tòa");
 
         // The engine must accept keystrokes normally after compaction:
-        // re-typing the deleted consonant and the tone key recomposes the word.
+        // re-typing the deleted consonant recomposes the word since tone was kept.
         e.process_key('n', Mode::Vietnamese);
-        e.process_key('f', Mode::Vietnamese);
         assert_eq!(e.output(), "toàn");
 
         // And keep composing fresh words after a commit.

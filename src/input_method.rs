@@ -331,7 +331,7 @@ fn parse_toneless_rule(key: char, effective_on: char, result: char, effect: Mark
 /// Parse: `([a-zA-Z]+)_(\p{L}+)([_\p{L}]*)`.
 fn parse_dsl(s: &str) -> Option<(Vec<char>, Vec<char>, &str)> {
     let (left, right) = s.split_once('_')?;
-    if left.is_empty() || !left.chars().all(|c| c.is_ascii_alphabetic()) {
+    if left.is_empty() || !left.chars().all(|c| c.is_alphabetic()) {
         return None;
     }
 

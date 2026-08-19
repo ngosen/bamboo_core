@@ -12,37 +12,41 @@ const MAX_TRANS: usize = 24;
 /// Transitions are stored as sorted `(key, state_id)` pairs instead of a full
 /// 128-entry table. A 128-bit bitset enables O(1) "has transition?" checks
 /// and fast rejection for keys that don't have transitions.
+#[repr(C)]
 #[derive(Clone, Debug)]
 pub struct State {
-    /// 128-bit bitset: bit i = 1 means key (i) has a transition.
-    /// Enables O(1) rejection for keys without transitions.
+    /// 128-bit bitset: bit i = 1 means key (i) has a transition (16 bytes: offset 0..16).
     pub bitset: [u64; 2],
-    /// Precomputed hash of the composition for O(1) equality check.
-    pub comp_hash: u64,
-    /// Destination state IDs for transitions.
-    pub trans_states: [u32; MAX_TRANS],
-    /// Start index in the DFA arena.
-    pub comp_offset: u32,
-    /// Keys triggering transitions (dense, cache-friendly array).
+    /// Keys triggering transitions (24 bytes: offset 16..40).
     pub trans_keys: [u8; MAX_TRANS],
-    /// Number of valid transitions.
+    /// Precomputed hash of the composition for O(1) equality check (8 bytes: offset 40..48).
+    pub comp_hash: u64,
+    /// Start index in the DFA arena (4 bytes: offset 48..52).
+    pub comp_offset: u32,
+    /// Number of valid transitions (1 byte: offset 52).
     pub trans_len: u8,
-    /// Number of transformations in this state.
+    /// Number of transformations in this state (1 byte: offset 53).
     pub comp_len: u8,
+    /// Explicit padding to ensure hot cache line boundary at 64 bytes.
+    pub _pad_hot: [u8; 10],
+
+    /// Destination state IDs for transitions (96 bytes: offset 64..160).
+    pub trans_states: [u32; MAX_TRANS],
 }
 
-const _: () = assert!(std::mem::size_of::<State>() <= 160);
+const _: () = assert!(std::mem::size_of::<State>() == 160);
 
 impl Default for State {
     fn default() -> Self {
         Self {
             bitset: [0; 2],
-            comp_hash: 0,
-            trans_states: [0; MAX_TRANS],
-            comp_offset: 0,
             trans_keys: [0; MAX_TRANS],
+            comp_hash: 0,
+            comp_offset: 0,
             trans_len: 0,
             comp_len: 0,
+            _pad_hot: [0; 10],
+            trans_states: [0; MAX_TRANS],
         }
     }
 }

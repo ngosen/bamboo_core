@@ -13,7 +13,7 @@ static TELEX: InputMethodDef = phf_map! {
     "a" => "A_Â",
     "e" => "E_Ê",
     "o" => "O_Ô",
-    "w" => "UOA_ƯƠĂ",
+    "w" => "UOAÔ_ƯƠĂƠ",
     "d" => "D_Đ",
 };
 
@@ -76,7 +76,7 @@ static TELEX_2: InputMethodDef = phf_map! {
     "a" => "A_Â",
     "e" => "E_Ê",
     "o" => "O_Ô",
-    "w" => "UOA_ƯƠĂ__Ư",
+    "w" => "UOAÔ_ƯƠĂƠ__Ư",
     "d" => "D_Đ",
     "]" => "__ư",
     "[" => "__ơ",
@@ -94,7 +94,7 @@ static TELEX_VNI: InputMethodDef = phf_map! {
     "a" => "A_Â",
     "e" => "E_Ê",
     "o" => "O_Ô",
-    "w" => "UOA_ƯƠĂ",
+    "w" => "UOAÔ_ƯƠĂƠ",
     "d" => "D_Đ",
     "0" => "XoaDauThanh",
     "1" => "DauSac",
@@ -118,7 +118,7 @@ static TELEX_VNI_VIQR: InputMethodDef = phf_map! {
     "a" => "A_Â",
     "e" => "E_Ê",
     "o" => "O_Ô",
-    "w" => "UOA_ƯƠĂ",
+    "w" => "UOAÔ_ƯƠĂƠ",
     "d" => "D_Đ",
     "0" => "XoaDauThanh",
     "1" => "DauSac",
@@ -165,7 +165,7 @@ static TELEX_W: InputMethodDef = phf_map! {
     "a" => "A_Â",
     "e" => "E_Ê",
     "o" => "O_Ô",
-    "w" => "UOA_ƯƠĂ__Ư",
+    "w" => "UOAÔ_ƯƠĂƠ__Ư",
     "d" => "D_Đ",
 };
 

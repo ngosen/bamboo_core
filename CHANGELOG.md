@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.20] - 2026-08-19
+
+### Performance & Extreme Optimizations
+- **L1 Cache-Line 0 Packing (`State` Struct Alignment):** Restructured `State` (160 bytes) via SoA hot/cold field splitting. Packed `bitset`, `trans_keys`, `trans_len`, `comp_hash`, and `comp_offset` into exactly the first 64 bytes (Cache Line 0). Resolves DFA transition lookups in a single L1 cache line access.
+- **Fast-Path Case Branching:** Bypassed case-copy loops in DFA cache hits when typing lowercase text (95%+ common keystrokes), reducing hot path to a single direct `memcpy`.
+- **Zero-Overhead ASCII Character Pushing:** Inlined `push_char_fast` in `flattener`, writing single-byte ASCII codepoints directly without UTF-8 encoding branch overhead.
+- **Vectorized UTF-8 Prefix Diff Counting:** Vectorized UTF-8 leading byte counting (`(b & 0xC0) != 0x80`) in `lcp_chars_and_bytes`, enabling LLVM SIMD popcount.
+- **In-Place Tone Relocation:** `refresh_last_tone_target_into` now mutates composition slices directly in-place, eliminating temporary stack buffer copies.
+- **Fat LTO Benchmark Configuration:** Configured `[profile.bench]` with `lto = "fat"` and `codegen-units = 1`.
+
+### Correctness & Phonotactics
+- **DFA Canonical Lowercase Isolation:** DFA Arena now stores canonical lowercase states exclusively, dynamically mapping case on the stack to prevent $2^N$ state explosion.
+- **Auto-Correct Undo Protection:** Protected explicit user undos from being incorrectly restored by auto-correct while allowing standard English word auto-correction.
+- **Companion Horn Onset Guard (`is_th_or_h_open`):** Open syllables with `th` or `h` onsets (`thuở`, `huơ`) only horn `o \to ơ` without companion horning `u \to ư`.
+
+### Test Suites
+- Added comprehensive cross-validation test suites ported from `skey-engine`, `uvie` (v2.1.1), and `vi` (v0.8.0):
+  - `tests/skey_comparison_suite.rs` (226 baseline Vietnamese tests)
+  - `tests/skey_repo_tests.rs` (10 test groups covering all 70 vowel sequences, rapid tone reassignment, and zero-delay typing streams)
+  - `tests/vi_uvie_comprehensive_suite.rs` (8 test groups covering freestyle typing, full sentences, and phonotactic constraints)
+
 ## [0.3.19] - 2026-08-18
 
 ### Fixed

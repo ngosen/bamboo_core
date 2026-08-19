@@ -47,6 +47,18 @@ fn estimate_cap_bytes_slice(composition: &[Transformation], options: OutputOptio
     char_count * 4
 }
 
+#[inline(always)]
+fn push_char_fast(out: &mut String, c: char) {
+    if c.is_ascii() {
+        // SAFETY: c is validated ASCII (0..127), which is guaranteed valid single-byte UTF-8.
+        unsafe {
+            out.as_mut_vec().push(c as u8);
+        }
+    } else {
+        out.push(c);
+    }
+}
+
 fn write_canvas_slice(composition: &[Transformation], options: OutputOptions, out: &mut String) {
     if composition.is_empty() {
         return;
@@ -103,12 +115,11 @@ fn write_canvas_slice(composition: &[Transformation], options: OutputOptions, ou
                 }
                 effects[count] = curr;
                 count += 1;
-                let idx = curr as usize;
-                curr = if idx < MAX_ACTIVE_TRANS { next_effect[idx] } else { NO_EFFECT };
+                curr = next_effect[curr as usize];
             }
 
-            for i in (0..count).rev() {
-                let t = &composition[effects[i] as usize];
+            for &eff_idx in effects[..count].iter().rev() {
+                let t = &composition[eff_idx as usize];
 
                 match t.rule.effect_type {
                     EffectType::MarkTransformation => {
@@ -133,13 +144,14 @@ fn write_canvas_slice(composition: &[Transformation], options: OutputOptions, ou
             chr = crate::utils::add_mark_to_toneless_char(add_tone_to_char(chr, 0), 0);
         }
 
-        if options.contains(OutputOptions::LOWER_CASE) {
-            out.push(lower(chr));
+        let final_chr = if options.contains(OutputOptions::LOWER_CASE) {
+            lower(chr)
         } else if appending_trans.is_upper_case {
-            out.push(upper(chr));
+            upper(chr)
         } else {
-            out.push(chr);
-        }
+            chr
+        };
+        push_char_fast(out, final_chr);
     }
 }
 

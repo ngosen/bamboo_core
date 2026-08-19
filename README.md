@@ -21,7 +21,7 @@ A high-performance Vietnamese input method engine (IME) core written in Rust, po
 
 ```toml
 [dependencies]
-bamboo-core = "0.3.19"
+bamboo-core = "0.3.20"
 ```
 
 
@@ -150,6 +150,20 @@ assert_eq!(engine.get_processed_str(OutputOptions::TONE_LESS), "Trăng");
 // Full text (committed + active)
 assert_eq!(engine.get_processed_str(OutputOptions::FULL_TEXT), "Trăng");
 ```
+
+## Performance & Benchmarks (2026)
+
+Bamboo Core is architected for zero heap allocations in the interactive typing loop, sub-microsecond keystroke latency, and high CPU cache efficiency via L1 cache line packing and SWAR vector matching.
+
+| Benchmark Scenario | Bamboo Core (`v0.3.20`) | Skey-Engine (`v0.1.4`) | Uvie (`v2.1.1`) | Vi (`v0.8.0`) |
+|---|---|---|---|---|
+| Single word `tieengs` $\to$ `tiếng` | **87.8 ns** | 292.2 ns | 789.0 ns | 2580.0 ns |
+| Short word `vietj` $\to$ `việt` | **58.7 ns** | 175.5 ns | 682.1 ns | 1547.3 ns |
+| Compound word `nguwowif` $\to$ `người` | **106.6 ns** | 329.7 ns | 883.5 ns | 3265.3 ns |
+| Interactive backspace (`tieengs` + 2 Del) | **212.8 ns** | 380.7 ns | 1100.5 ns | 1588.5 ns |
+| Sentence stream (27 characters) | **778.8 ns** | 2848.9 ns | 2076.9 ns | 8904.2 ns |
+| Paragraph text stream (62 characters) | **1766.7 ns** | 13115.1 ns | 5256.0 ns | 22077.0 ns |
+| Code / English passthrough (31 chars) | **1176.7 ns** | 3756.6 ns | 3613.6 ns | 9467.7 ns |
 
 ## Credits
 

@@ -54,7 +54,7 @@ dependencies = [
 
 [[package]]
 name = "bamboo-core"
-version = "0.3.19"
+version = "0.3.20"
 dependencies = [
  "bitflags",
  "phf 0.13.1",
@@ -508,9 +508,12 @@ checksum = "8ee5873ec9cce0195efcb7a4e9507a04cd49aec9c83d0389df45b1ef7ba2e649"
 
 [[package]]
 name = "skey-engine"
-version = "0.1.4"
+version = "0.1.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1bf69791fcd2be91875410ba2bbb6d0814b6fd17c1574cd25311a16426d37488"
+checksum = "5e34b7eb6b87136511e974665082f2f2de4be98cf1c9cbd8ad96b4a6c2127e09"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "smallvec"
