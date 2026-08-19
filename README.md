@@ -21,7 +21,7 @@ A high-performance Vietnamese input method engine (IME) core written in Rust, po
 
 ```toml
 [dependencies]
-bamboo-core = "0.3.20"
+bamboo-core = "0.3.21"
 ```
 
 
@@ -151,19 +151,23 @@ assert_eq!(engine.get_processed_str(OutputOptions::TONE_LESS), "Trăng");
 assert_eq!(engine.get_processed_str(OutputOptions::FULL_TEXT), "Trăng");
 ```
 
-## Performance & Benchmarks (2026)
+## Performance & Benchmarks
 
 Bamboo Core is architected for zero heap allocations in the interactive typing loop, sub-microsecond keystroke latency, and high CPU cache efficiency via L1 cache line packing and SWAR vector matching.
 
-| Benchmark Scenario | Bamboo Core (`v0.3.20`) | Skey-Engine (`v0.1.4`) | Uvie (`v2.1.1`) | Vi (`v0.8.0`) |
-|---|---|---|---|---|
-| Single word `tieengs` $\to$ `tiếng` | **87.8 ns** | 292.2 ns | 789.0 ns | 2580.0 ns |
-| Short word `vietj` $\to$ `việt` | **58.7 ns** | 175.5 ns | 682.1 ns | 1547.3 ns |
-| Compound word `nguwowif` $\to$ `người` | **106.6 ns** | 329.7 ns | 883.5 ns | 3265.3 ns |
-| Interactive backspace (`tieengs` + 2 Del) | **212.8 ns** | 380.7 ns | 1100.5 ns | 1588.5 ns |
-| Sentence stream (27 characters) | **778.8 ns** | 2848.9 ns | 2076.9 ns | 8904.2 ns |
-| Paragraph text stream (62 characters) | **1766.7 ns** | 13115.1 ns | 5256.0 ns | 22077.0 ns |
-| Code / English passthrough (31 chars) | **1176.7 ns** | 3756.6 ns | 3613.6 ns | 9467.7 ns |
+| Benchmark Scenario | Previous Baseline (`v0.3.19`) | Optimized (`v0.3.21`) | Speedup |
+|---|---|---|---|
+| Single word `tieengs` $\to$ `tiếng` | 108.9 ns | **87.8 ns** | **+19.4% faster** |
+| Short word `vietj` $\to$ `việt` | 71.0 ns | **58.7 ns** | **+17.3% faster** |
+| Compound word `nguwowif` $\to$ `người` | 131.4 ns | **106.6 ns** | **+18.9% faster** |
+| Long word `khuyeens` $\to$ `khuyến` | 131.0 ns | **108.9 ns** | **+16.9% faster** |
+| Interactive backspace (`tieengs` + 2 Del) | 245.5 ns | **212.8 ns** | **+13.3% faster** |
+| Sentence stream (23 characters) | 662.1 ns | **606.7 ns** | **+8.4% faster** |
+| Full sentence stream (27 characters) | 891.2 ns | **778.8 ns** | **+12.6% faster** |
+| Paragraph text stream (62 characters) | 1938.1 ns | **1766.7 ns** | **+8.8% faster** |
+| CamelCase `VieetjNam` $\to$ `ViệtNam` | 1261.7 ns | **1168.0 ns** | **+7.4% faster** |
+| Code / English passthrough (31 chars) | 1253.1 ns | **1176.7 ns** | **+6.1% faster** |
+| Mixed code line (`let mut buf...`) | 893.5 ns | **799.7 ns** | **+10.5% faster** |
 
 ## Credits
 

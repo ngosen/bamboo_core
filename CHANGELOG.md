@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.21] - 2026-08-19
+
+### Documentation
+- Updated `README.md` benchmark presentation to focus on performance progression comparing the previous baseline (`v0.3.19`) against the optimized engine (`v0.3.21`), highlighting +19.4% keystroke throughput improvements.
+
 ## [0.3.20] - 2026-08-19
 
 ### Performance & Extreme Optimizations
