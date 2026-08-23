@@ -54,7 +54,7 @@ impl Default for State {
 impl State {
     /// Looks up a transition by key. Uses bitset for O(1) rejection and SWAR for fast byte matching.
     #[inline]
-    pub fn get_transition(&self, key: u8) -> u32 {
+    pub const fn get_transition(&self, key: u8) -> u32 {
         // O(1) rejection: if the bit is not set, no transition exists.
         let idx = key as usize;
         if self.bitset[idx / 64] & (1u64 << (idx % 64)) == 0 {
@@ -65,6 +65,8 @@ impl State {
         let k_ptr = self.trans_keys.as_ptr() as *const u64;
 
         // Check chunk 0 (keys 0..8)
+        // SAFETY: k_ptr is valid for reading up to 24 bytes (3 chunks of 8 bytes each)
+        // and read_unaligned handles potential misalignment.
         let c0 = unsafe { u64::from_le(std::ptr::read_unaligned(k_ptr)) };
         let v0 = c0 ^ broadcast;
         let m0 = v0.wrapping_sub(0x0101010101010101) & !v0 & 0x8080808080808080;
@@ -77,6 +79,8 @@ impl State {
 
         // Check chunk 1 (keys 8..16)
         if self.trans_len > 8 {
+            // SAFETY: k_ptr is valid for reading up to 24 bytes (3 chunks of 8 bytes each)
+            // and read_unaligned handles potential misalignment.
             let c1 = unsafe { u64::from_le(std::ptr::read_unaligned(k_ptr.add(1))) };
             let v1 = c1 ^ broadcast;
             let m1 = v1.wrapping_sub(0x0101010101010101) & !v1 & 0x8080808080808080;
@@ -90,6 +94,8 @@ impl State {
 
         // Check chunk 2 (keys 16..24)
         if self.trans_len > 16 {
+            // SAFETY: k_ptr is valid for reading up to 24 bytes (3 chunks of 8 bytes each)
+            // and read_unaligned handles potential misalignment.
             let c2 = unsafe { u64::from_le(std::ptr::read_unaligned(k_ptr.add(2))) };
             let v2 = c2 ^ broadcast;
             let m2 = v2.wrapping_sub(0x0101010101010101) & !v2 & 0x8080808080808080;
@@ -126,10 +132,11 @@ impl State {
 }
 
 /// The DFA core that manages states and transitions with Arena Allocation.
+#[derive(Debug)]
 pub struct Dfa {
     pub states: Vec<State>,
     pub arena: Vec<Transformation>,
-    /// Maps composition hash → state_id for O(1) lookup (collision-free for distinct compositions).
+    /// Maps composition hash → `state_id` for O(1) lookup (collision-free for distinct compositions).
     pub hash_to_state: FxHashMap<u64, u32>,
 }
 

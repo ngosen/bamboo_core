@@ -88,17 +88,17 @@ const _: () = assert!(std::mem::size_of::<Rule>() <= 24);
 
 impl Rule {
     /// Sets the effect value from a [`Tone`].
-    pub fn set_tone(&mut self, tone: Tone) {
+    pub const fn set_tone(&mut self, tone: Tone) {
         self.effect = tone as u8;
     }
 
     /// Sets the effect value from a [`Mark`].
-    pub fn set_mark(&mut self, mark: Mark) {
+    pub const fn set_mark(&mut self, mark: Mark) {
         self.effect = mark as u8;
     }
 
     /// Retrieves the effect value as a [`Tone`].
-    pub fn get_tone(&self) -> Tone {
+    pub const fn get_tone(&self) -> Tone {
         // Safety: effect is created by parser or engine.
         match self.effect {
             1 => Tone::Grave,
@@ -111,7 +111,7 @@ impl Rule {
     }
 
     /// Retrieves the effect value as a [`Mark`].
-    pub fn get_mark(&self) -> Mark {
+    pub const fn get_mark(&self) -> Mark {
         match self.effect {
             1 => Mark::Hat,
             2 => Mark::Breve,
@@ -130,7 +130,7 @@ impl Rule {
 #[derive(Clone, Debug, Default)]
 pub struct InputMethod {
     /// The name of the input method.
-    pub name: String,
+    pub name: &'static str,
     /// The complete list of transformation rules.
     pub rules: Vec<Rule>,
     /// Keys that can affect multiple vowels at once (e.g., 'w' in Telex).
@@ -144,6 +144,36 @@ pub struct InputMethod {
 }
 
 impl InputMethod {
+    /// Returns the name of the input method.
+    pub const fn name(&self) -> &'static str {
+        self.name
+    }
+
+    /// Returns the transformation rules.
+    pub fn rules(&self) -> &[Rule] {
+        &self.rules
+    }
+
+    /// Returns the super keys (keys that can affect multiple vowels).
+    pub fn super_keys(&self) -> &[char] {
+        &self.super_keys
+    }
+
+    /// Returns the tone mark keys.
+    pub fn tone_keys(&self) -> &[char] {
+        &self.tone_keys
+    }
+
+    /// Returns the appending keys.
+    pub fn appending_keys(&self) -> &[char] {
+        &self.appending_keys
+    }
+
+    /// Returns all keys with associated rules.
+    pub fn keys(&self) -> &[char] {
+        &self.keys
+    }
+
     /// Standard Telex input method.
     pub fn telex() -> Self {
         parse_input_method("Telex")
@@ -191,19 +221,21 @@ impl InputMethod {
 }
 
 /// Parse a known input method by name from the built-in definitions.
-pub(crate) fn parse_input_method(im_name: &str) -> InputMethod {
+pub(crate) fn parse_input_method(im_name: &'static str) -> InputMethod {
     let defs = crate::input_method_def::get_input_method_definitions();
     defs.get(im_name).copied().map(|def| parse_input_method_def(im_name, def)).unwrap_or_default()
 }
 
 /// Parses an input method definition from its structured format.
-pub(crate) fn parse_input_method_def(im_name: &str, im_def: &InputMethodDef) -> InputMethod {
-    let mut im = InputMethod { name: im_name.to_string(), ..Default::default() };
+pub(crate) fn parse_input_method_def(
+    im_name: &'static str,
+    im_def: &InputMethodDef,
+) -> InputMethod {
+    let mut im = InputMethod { name: im_name, ..Default::default() };
 
     for (key_str, line) in im_def.entries() {
-        let key = match key_str.chars().next() {
-            Some(c) => c,
-            None => continue,
+        let Some(key) = key_str.chars().next() else {
+            continue;
         };
 
         im.rules.extend(parse_rules(key, line));

@@ -25,6 +25,11 @@ impl Config {
         Self { free_tone_marking: true, std_tone_style: true, auto_correct: true }
     }
 
+    /// Returns a [`ConfigBuilder`] for constructing a custom configuration.
+    pub const fn builder() -> ConfigBuilder {
+        ConfigBuilder::new()
+    }
+
     pub(crate) const fn to_flags(self) -> u32 {
         let mut flags = 0;
         if self.free_tone_marking {
@@ -46,6 +51,42 @@ impl Config {
             std_tone_style: (flags & (1 << 1)) != 0,
             auto_correct: (flags & (1 << 2)) != 0,
         }
+    }
+}
+
+/// A fluent builder for constructing a [`Config`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ConfigBuilder {
+    config: Config,
+}
+
+impl ConfigBuilder {
+    /// Creates a new builder initialized with default settings.
+    pub const fn new() -> Self {
+        Self { config: Config::new() }
+    }
+
+    /// Sets whether free tone marking is allowed.
+    pub const fn free_tone_marking(mut self, enabled: bool) -> Self {
+        self.config.free_tone_marking = enabled;
+        self
+    }
+
+    /// Sets whether standard tone style is enabled.
+    pub const fn std_tone_style(mut self, enabled: bool) -> Self {
+        self.config.std_tone_style = enabled;
+        self
+    }
+
+    /// Sets whether automatic spelling correction is enabled.
+    pub const fn auto_correct(mut self, enabled: bool) -> Self {
+        self.config.auto_correct = enabled;
+        self
+    }
+
+    /// Builds and returns the final [`Config`].
+    pub const fn build(self) -> Config {
+        self.config
     }
 }
 
@@ -73,5 +114,19 @@ mod tests {
         let cfg = Config::default();
         // Default: all three enabled → flags = 0b111 = 7
         assert_eq!(cfg.to_flags(), 7);
+    }
+
+    #[test]
+    fn config_builder() {
+        let cfg = Config::builder()
+            .free_tone_marking(false)
+            .std_tone_style(true)
+            .auto_correct(false)
+            .build();
+
+        assert_eq!(
+            cfg,
+            Config { free_tone_marking: false, std_tone_style: true, auto_correct: false }
+        );
     }
 }

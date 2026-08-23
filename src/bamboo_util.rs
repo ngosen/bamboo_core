@@ -48,7 +48,7 @@ pub(crate) fn find_last_appending_entry(
 }
 
 /// Creates a new transformation that simply appends a character.
-pub(crate) fn new_appending_trans(key: char, is_upper_case: bool) -> Transformation {
+pub(crate) const fn new_appending_trans(key: char, is_upper_case: bool) -> Transformation {
     Transformation {
         is_upper_case,
         target: None,

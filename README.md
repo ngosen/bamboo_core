@@ -21,17 +21,38 @@ A high-performance Vietnamese input method engine (IME) core written in Rust, po
 
 ```toml
 [dependencies]
-bamboo-core = "0.3.21"
+bamboo-core = "0.3.22"
 ```
 
+## Quick Start — IME Integration
 
-## Quick Start
+Feed keystrokes one at a time with `process_key`:
 
 ```rust
 use bamboo_core::{Engine, Mode, InputMethod};
 
 let mut engine = Engine::new(InputMethod::telex());
 
+engine.process_key('t', Mode::Vietnamese);
+engine.process_key('i', Mode::Vietnamese);
+engine.process_key('e', Mode::Vietnamese);
+engine.process_key('e', Mode::Vietnamese);
+engine.process_key('n', Mode::Vietnamese);
+engine.process_key('g', Mode::Vietnamese);
+engine.process_key('s', Mode::Vietnamese);
+assert_eq!(engine.output(), "tiếng");
+```
+
+### Batch & Testing Convenience
+
+> ⚠️ **Note:** `Engine::process` is a convenience wrapper intended for **testing and batch validation only** (not for real-time production IME integration). For production applications, use `process_key` or `process_key_delta`.
+
+```rust
+use bamboo_core::{Engine, Mode, InputMethod};
+
+let mut engine = Engine::new(InputMethod::telex());
+
+// Testing convenience wrapper
 let word = engine.process("tieengs", Mode::Vietnamese);
 assert_eq!(word, "tiếng");
 
@@ -61,26 +82,7 @@ let mut engine = Engine::new(InputMethod::telex());
 assert_eq!(engine.process("ass", Mode::Vietnamese), "as");
 ```
 
-## Incremental Processing
-
-Process keystrokes one at a time for IME integration:
-
-```rust
-use bamboo_core::{Engine, Mode, InputMethod};
-
-let mut engine = Engine::new(InputMethod::telex());
-
-engine.process_key('t', Mode::Vietnamese);
-engine.process_key('i', Mode::Vietnamese);
-engine.process_key('e', Mode::Vietnamese);
-engine.process_key('e', Mode::Vietnamese);
-engine.process_key('n', Mode::Vietnamese);
-engine.process_key('g', Mode::Vietnamese);
-engine.process_key('s', Mode::Vietnamese);
-assert_eq!(engine.output(), "tiếng");
-```
-
-### Delta Updates
+## Delta Updates for Text Editors
 
 For efficient text editor integration, use `process_key_delta` to get a **3-way diff**:
 
@@ -110,19 +112,19 @@ Frontend does not need to compute LCP — the engine does it.
 ## Backspace
 
 ```rust
-use bamboo_core::{Engine, Mode, InputMethod};
+use bamboo_core::{Engine, Mode, InputMethod, RestoreMark};
 
 let mut engine = Engine::new(InputMethod::telex());
 engine.process_str("chuyeenr", Mode::Vietnamese);
 assert_eq!(engine.output(), "chuyển");
 
-engine.remove_last_char(true);
+engine.remove_last_char(RestoreMark::Yes); // or pass true
 assert_eq!(engine.output(), "chuyên");
 ```
 
 Two backspace modes are available:
 
-- `remove_last_char(true)` — undo the **last keystroke** (O(1) via snapshot stack).
+- `remove_last_char(RestoreMark::Yes)` (or `true`) — undo the **last keystroke** (O(1) via snapshot stack).
   `tiếng` + DEL -> `tiêng`.
 - `remove_last_output_char()` — delete the **entire character before the caret**,
   keeping mark/tone transformations on earlier characters. `tiếng` + DEL -> `tiến`:

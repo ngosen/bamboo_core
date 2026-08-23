@@ -1,7 +1,7 @@
 //! C-Compatible FFI Layer for Bamboo Core.
 //!
 //! This module provides an `extern "C"` API for integrating Bamboo with
-//! other languages like C, C++, Python, and IME frameworks (Fcitx5, IBus).
+//! other languages like C, C++, Python, and IME frameworks (Fcitx5, `IBus`).
 
 // Unsafe extern "C" fns operate on raw pointers validated by the caller; the
 // bodies dereference them directly without per-op unsafe blocks (edition 2024
@@ -17,6 +17,51 @@ use crate::engine::Engine;
 use crate::input_method::InputMethod;
 use crate::mode::Mode;
 
+/// C-compatible enum representing supported Vietnamese input methods for FFI.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BambooMethod {
+    /// Telex input method.
+    #[default]
+    Telex = 0,
+    /// VNI input method.
+    Vni = 1,
+    /// VIQR input method.
+    Viqr = 2,
+    /// Microsoft Standard layout.
+    MicrosoftLayout = 3,
+    /// Telex 2 input method.
+    Telex2 = 4,
+    /// Telex W input method.
+    TelexW = 5,
+}
+
+impl BambooMethod {
+    /// Converts an integer to a [`BambooMethod`], defaulting to [`BambooMethod::Telex`].
+    pub const fn from_i32(val: i32) -> Self {
+        match val {
+            1 => Self::Vni,
+            2 => Self::Viqr,
+            3 => Self::MicrosoftLayout,
+            4 => Self::Telex2,
+            5 => Self::TelexW,
+            _ => Self::Telex,
+        }
+    }
+
+    /// Converts the enum variant to its corresponding [`InputMethod`].
+    pub fn to_input_method(self) -> InputMethod {
+        match self {
+            Self::Telex => InputMethod::telex(),
+            Self::Vni => InputMethod::vni(),
+            Self::Viqr => InputMethod::viqr(),
+            Self::MicrosoftLayout => InputMethod::microsoft_layout(),
+            Self::Telex2 => InputMethod::telex_2(),
+            Self::TelexW => InputMethod::telex_w(),
+        }
+    }
+}
+
 static GLOBAL_ENGINE: Mutex<Option<Engine>> = Mutex::new(None);
 
 fn with_engine<F, R>(f: F) -> R
@@ -26,12 +71,12 @@ where
 {
     let mut guard = match GLOBAL_ENGINE.lock() {
         Ok(g) => g,
-        Err(_) => return R::default(),
+        Err(poisoned) => poisoned.into_inner(),
     };
     if guard.is_none() {
         *guard = Some(Engine::new(InputMethod::telex()));
     }
-    f(guard.as_mut().unwrap())
+    if let Some(engine) = guard.as_mut() { f(engine) } else { R::default() }
 }
 
 /// Initializes the global engine with the default Telex input method.
@@ -63,15 +108,7 @@ pub extern "C" fn bamboo_reset() {
 ///     * 5: Telex W
 #[unsafe(no_mangle)]
 pub extern "C" fn bamboo_set_input_method(method: i32) {
-    let im = match method {
-        0 => InputMethod::telex(),
-        1 => InputMethod::vni(),
-        2 => InputMethod::viqr(),
-        3 => InputMethod::microsoft_layout(),
-        4 => InputMethod::telex_2(),
-        5 => InputMethod::telex_w(),
-        _ => return,
-    };
+    let im = BambooMethod::from_i32(method).to_input_method();
     let mut guard = match GLOBAL_ENGINE.lock() {
         Ok(g) => g,
         Err(poisoned) => poisoned.into_inner(),
@@ -99,7 +136,7 @@ pub extern "C" fn bamboo_process_key(key: u32, is_vietnamese: i32) -> *mut c_cha
         }
         let out = e.output();
         // Engine output is valid UTF-8 without null bytes; fallback to empty string if somehow invalid.
-        CString::new(out).unwrap_or_default().into_raw()
+        CString::new(out.as_ref()).unwrap_or_default().into_raw()
     })
 }
 
@@ -136,7 +173,9 @@ pub unsafe extern "C" fn bamboo_process_key_buf(
     if guard.is_none() {
         *guard = Some(Engine::new(InputMethod::telex()));
     }
-    let e = guard.as_mut().unwrap();
+    let Some(e) = guard.as_mut() else {
+        return -1;
+    };
 
     let Some(c) = std::char::from_u32(key) else {
         *out_len = 0;
@@ -175,7 +214,7 @@ pub unsafe extern "C" fn bamboo_process_key_buf(
 pub extern "C" fn bamboo_output() -> *mut c_char {
     with_engine(|e| {
         let out = e.output();
-        CString::new(out).unwrap_or_default().into_raw()
+        CString::new(out.as_ref()).unwrap_or_default().into_raw()
     })
 }
 
@@ -206,7 +245,7 @@ pub type BambooEngine = Engine;
 ///
 /// # Arguments
 ///
-/// * `method` - An integer representing the input method (1: VNI, 2: VIQR, others: Telex).
+/// * `method` - An integer representing the input method (0: Telex, 1: VNI, 2: VIQR, 3: Microsoft layout, 4: Telex 2, 5: Telex W).
 ///
 /// # Returns
 ///
@@ -214,11 +253,7 @@ pub type BambooEngine = Engine;
 /// **Note:** The caller is responsible for freeing the engine using [`bamboo_engine_free`].
 #[unsafe(no_mangle)]
 pub extern "C" fn bamboo_engine_new(method: i32) -> *mut BambooEngine {
-    let im = match method {
-        1 => InputMethod::vni(),
-        2 => InputMethod::viqr(),
-        _ => InputMethod::telex(),
-    };
+    let im = BambooMethod::from_i32(method).to_input_method();
     Box::into_raw(Box::new(Engine::new(im)))
 }
 
@@ -249,7 +284,7 @@ pub unsafe extern "C" fn bamboo_engine_process(engine: *mut BambooEngine, key: u
         e.process_key(c, Mode::Vietnamese);
     }
     let out = e.output();
-    CString::new(out).unwrap_or_default().into_raw()
+    CString::new(out.as_ref()).unwrap_or_default().into_raw()
 }
 
 /// Removes the last output character (grapheme) from the active composition

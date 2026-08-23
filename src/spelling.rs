@@ -222,7 +222,7 @@ fn lookup_mask_optimized(
 }
 
 #[inline(always)]
-fn is_valid_cv(fc_mask: u16, vo_mask: u16) -> bool {
+const fn is_valid_cv(fc_mask: u16, vo_mask: u16) -> bool {
     let mut mask = fc_mask;
     while mask != 0 {
         let idx = mask.trailing_zeros() as usize;
@@ -235,7 +235,7 @@ fn is_valid_cv(fc_mask: u16, vo_mask: u16) -> bool {
 }
 
 #[inline(always)]
-fn is_valid_vc(vo_mask: u16, lc_mask: u16) -> bool {
+const fn is_valid_vc(vo_mask: u16, lc_mask: u16) -> bool {
     let mut mask = vo_mask;
     while mask != 0 {
         let idx = mask.trailing_zeros() as usize;

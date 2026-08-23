@@ -1,15 +1,39 @@
 //! The core engine that processes keypresses and maintains the IME state.
 
+use std::borrow::Cow;
+
 use crate::config::Config;
 use crate::input_method::{EffectType, InputMethod, Mark, Rule};
 use crate::mode::{Mode, OutputOptions};
 use crate::utils::{is_upper, lower};
 
+/// Options for restoring or refreshing tone targets when removing characters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RestoreMark {
+    /// Refresh the last tone target to maintain valid tone placement.
+    #[default]
+    Yes,
+    /// Do not refresh the last tone target.
+    No,
+}
+
+impl From<bool> for RestoreMark {
+    fn from(v: bool) -> Self {
+        if v { Self::Yes } else { Self::No }
+    }
+}
+
+impl From<RestoreMark> for bool {
+    fn from(r: RestoreMark) -> Self {
+        matches!(r, RestoreMark::Yes)
+    }
+}
+
 /// Maximum number of active transformations in a single syllable.
 pub const MAX_ACTIVE_TRANS: usize = 16;
 
 /// A lightweight snapshot of the engine state before a keystroke, used for O(1) backspace.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 struct Snapshot {
     active_buffer: [Transformation; MAX_ACTIVE_TRANS],
     active_len: usize,
@@ -24,7 +48,7 @@ pub struct Transformation {
     pub rule: Rule,
     /// The index of the transformation in the composition that this transformation targets (if any).
     /// For example, a tone mark transformation targets an earlier vowel.
-    /// Uses u8 since MAX_ACTIVE_TRANS = 16, saving 14 bytes vs `Option<usize>`.
+    /// Uses u8 since `MAX_ACTIVE_TRANS` = 16, saving 14 bytes vs `Option<usize>`.
     pub target: Option<u8>,
     /// Whether the resulting character should be rendered as uppercase.
     pub is_upper_case: bool,
@@ -62,7 +86,7 @@ impl TransformationStack {
 
     /// Removes and returns the last transformation from the stack.
     #[allow(dead_code)]
-    pub fn pop(&mut self) -> Option<Transformation> {
+    pub const fn pop(&mut self) -> Option<Transformation> {
         if self.len > 0 {
             self.len -= 1;
             Some(self.data[self.len])
@@ -72,17 +96,17 @@ impl TransformationStack {
     }
 
     /// Clears all transformations from the stack.
-    pub fn clear(&mut self) {
+    pub const fn clear(&mut self) {
         self.len = 0;
     }
 
     /// Returns the number of transformations currently in the stack.
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.len
     }
 
     /// Returns true if the stack contains no transformations.
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.len == 0
     }
 
@@ -128,6 +152,7 @@ fn uoh_tail_match(s: &str) -> bool {
 ///
 /// It maintains an internal buffer of transformations and produces the correctly marked Vietnamese text.
 /// The engine uses a hybrid approach combining a Rule Engine with a Lazy JIT DFA for peak performance.
+#[derive(Debug)]
 pub struct Engine {
     committed_text: String,
     /// Stack-allocated buffer for the active composition to avoid heap allocations.
@@ -156,7 +181,7 @@ pub struct Engine {
     snapshots: [Snapshot; MAX_ACTIVE_TRANS],
     snapshot_len: usize,
 
-    /// Lazily-initialized scratch engine for restore_last_word to avoid repeated with_config.
+    /// Lazily-initialized scratch engine for `restore_last_word` to avoid repeated `with_config`.
     scratch_engine: Option<Box<Engine>>,
     english_bypass: bool,
 }
@@ -169,27 +194,40 @@ impl Engine {
 
     /// Creates a new engine with a specific input method and configuration.
     pub fn with_config(input_method: InputMethod, config: Config) -> Self {
-        let mut rules_by_key: std::collections::BTreeMap<char, Vec<Rule>> =
-            std::collections::BTreeMap::new();
+        let mut ascii_rules: [Vec<Rule>; 128] = std::array::from_fn(|_| Vec::new());
+        let mut non_ascii_rules: Vec<(char, Vec<Rule>)> = Vec::new();
+
         for rule in &input_method.rules {
             let key = lower(rule.key);
-            rules_by_key.entry(key).or_default().push(*rule);
+            if (key as u32) < 128 {
+                ascii_rules[key as usize].push(*rule);
+            } else if let Some((_, rules)) = non_ascii_rules.iter_mut().find(|(k, _)| *k == key) {
+                rules.push(*rule);
+            } else {
+                non_ascii_rules.push((key, vec![*rule]));
+            }
         }
 
-        let total_rules: usize = rules_by_key.values().map(|v| v.len()).sum();
+        let total_rules: usize = ascii_rules.iter().map(|v| v.len()).sum::<usize>()
+            + non_ascii_rules.iter().map(|(_, v)| v.len()).sum::<usize>();
         let mut all_rules_vec = Vec::with_capacity(total_rules);
         let mut ascii_rule_indices = [(0u16, 0u16); 128];
-        let mut non_ascii_indices_vec = Vec::new();
+        let mut non_ascii_indices_vec = Vec::with_capacity(non_ascii_rules.len());
 
-        for (key, rules) in rules_by_key {
+        for (ascii_char, rules) in ascii_rules.into_iter().enumerate() {
+            if !rules.is_empty() {
+                let start = all_rules_vec.len() as u16;
+                all_rules_vec.extend(rules);
+                let end = all_rules_vec.len() as u16;
+                ascii_rule_indices[ascii_char] = (start, end);
+            }
+        }
+
+        for (key, rules) in non_ascii_rules {
             let start = all_rules_vec.len() as u16;
             all_rules_vec.extend(rules);
             let end = all_rules_vec.len() as u16;
-            if key.is_ascii() {
-                ascii_rule_indices[key as usize] = (start, end);
-            } else {
-                non_ascii_indices_vec.push((key, (start, end)));
-            }
+            non_ascii_indices_vec.push((key, (start, end)));
         }
 
         let mut ascii_effect_keys = [false; 128];
@@ -282,17 +320,17 @@ impl Engine {
     }
 
     /// Returns the current configuration of the engine.
-    pub fn config(&self) -> Config {
+    pub const fn config(&self) -> Config {
         self.config
     }
 
     /// Updates the engine configuration.
-    pub fn set_config(&mut self, config: Config) {
+    pub const fn set_config(&mut self, config: Config) {
         self.config = config;
     }
 
     /// Returns a reference to the current input method.
-    pub fn input_method(&self) -> &InputMethod {
+    pub const fn input_method(&self) -> &InputMethod {
         &self.input_method
     }
 
@@ -480,12 +518,20 @@ impl Engine {
         composition.extend_from_slice(scratch.as_slice());
         has_undo
     }
-
     /// Processes a string of characters and returns the resulting active word.
     ///
     /// This is a convenience wrapper around [`Self::process_str`] and [`Self::output`].
+    ///
+    /// # ⚠️ Not Recommended for Production
+    ///
+    /// This method is primarily intended for **testing and convenience purposes**.
+    /// For production IME integration, use:
+    /// - [`process_key`](Self::process_key) or [`process_key_delta`](Self::process_key_delta) for real-time input
+    /// - [`process_str`](Self::process_str) + [`output`](Self::output) for batch processing
+    ///
+    /// This method may be deprecated or removed in a future version.
     pub fn process(&mut self, s: &str, mode: Mode) -> String {
-        self.process_str(s, mode).output()
+        self.process_str(s, mode).output().into_owned()
     }
 
     /// Processes a string of characters and returns a reference to the engine.
@@ -504,8 +550,16 @@ impl Engine {
 
         // 8-byte chunk comparison
         while lcp_bytes + 8 <= min_len {
-            let chunk_a = u64::from_ne_bytes(a_bytes[lcp_bytes..lcp_bytes + 8].try_into().unwrap());
-            let chunk_b = u64::from_ne_bytes(b_bytes[lcp_bytes..lcp_bytes + 8].try_into().unwrap());
+            let chunk_a = u64::from_ne_bytes(
+                a_bytes[lcp_bytes..lcp_bytes + 8]
+                    .try_into()
+                    .expect("lcp_bytes + 8 <= min_len guaranteed by loop bound"),
+            );
+            let chunk_b = u64::from_ne_bytes(
+                b_bytes[lcp_bytes..lcp_bytes + 8]
+                    .try_into()
+                    .expect("lcp_bytes + 8 <= min_len guaranteed by loop bound"),
+            );
             let diff = chunk_a ^ chunk_b;
             if diff != 0 {
                 #[cfg(target_endian = "little")]
@@ -808,36 +862,51 @@ impl Engine {
         self.english_bypass = false;
     }
 
-    /// Returns the currently active syllable as a string.
-    pub fn output(&self) -> String {
-        crate::flattener::flatten_slice(self.active_slice(), OutputOptions::NONE)
+    /// Returns the currently active syllable as a string slice or owned string.
+    pub fn output(&self) -> Cow<'_, str> {
+        if self.active_len == 0 {
+            Cow::Borrowed("")
+        } else {
+            Cow::Owned(crate::flattener::flatten_slice(self.active_slice(), OutputOptions::NONE))
+        }
+    }
+
+    /// Returns the processed string as a [`Cow<str>`] according to the specified options.
+    ///
+    /// Avoids heap allocations when the active buffer is empty or directly borrowable.
+    pub fn get_processed_str_cow(&self, options: OutputOptions) -> Cow<'_, str> {
+        let active = self.active_slice();
+        if options.contains(OutputOptions::FULL_TEXT) {
+            if active.is_empty() {
+                return Cow::Borrowed(&self.committed_text);
+            }
+            let mut result = String::with_capacity(self.committed_text.len() + active.len() * 4);
+            result.push_str(&self.committed_text);
+            crate::flattener::append_flatten_slice(active, options, &mut result);
+            return Cow::Owned(result);
+        }
+        if options.contains(OutputOptions::PUNCTUATION_MODE) {
+            if active.is_empty() {
+                return Cow::Borrowed("");
+            }
+            let (_, tail) = crate::bamboo_util::extract_last_word_with_punctuation_marks(
+                active,
+                &self.input_method.keys,
+            );
+            return Cow::Owned(crate::flattener::flatten_slice(tail, OutputOptions::NONE));
+        }
+        if active.is_empty() {
+            Cow::Borrowed("")
+        } else {
+            Cow::Owned(crate::flattener::flatten_slice(active, options))
+        }
     }
 
     /// Returns the processed string according to the specified options.
     ///
     /// This can be used to get the full text (committed + active) or variations like toneless text.
     pub fn get_processed_str(&self, options: OutputOptions) -> String {
-        let active = self.active_slice();
-        if options.contains(OutputOptions::FULL_TEXT) {
-            if active.is_empty() {
-                return self.committed_text.clone();
-            }
-            let mut result = String::with_capacity(self.committed_text.len() + active.len() * 4);
-            result.push_str(&self.committed_text);
-            crate::flattener::append_flatten_slice(active, options, &mut result);
-            return result;
-        }
-        if options.contains(OutputOptions::PUNCTUATION_MODE) {
-            if active.is_empty() {
-                return String::new();
-            }
-            let (_, tail) = crate::bamboo_util::extract_last_word_with_punctuation_marks(
-                active,
-                &self.input_method.keys,
-            );
-            return crate::flattener::flatten_slice(tail, OutputOptions::NONE);
-        }
-        crate::flattener::flatten_slice(active, options)
+        self.get_processed_str_cow(options).into_owned()
     }
 
     /// Checks if the current composition forms a valid Vietnamese syllable.
@@ -907,10 +976,13 @@ impl Engine {
     }
 
     /// Removes the last character from the active composition.
-    pub fn remove_last_char(&mut self, refresh_last_tone_target: bool) {
+    pub fn remove_last_char(&mut self, restore_mark: impl Into<RestoreMark>) {
         if self.pop_snapshot().is_none() {
             return;
         }
+
+        let restore_mark: RestoreMark = restore_mark.into();
+        let refresh_last_tone_target = matches!(restore_mark, RestoreMark::Yes);
 
         if refresh_last_tone_target && self.active_len > 0 {
             crate::bamboo_util::refresh_last_tone_target_into(
@@ -974,12 +1046,12 @@ impl Engine {
     }
 
     /// Returns the number of DFA states currently cached.
-    pub fn dfa_state_count(&self) -> usize {
+    pub const fn dfa_state_count(&self) -> usize {
         self.dfa.states.len()
     }
 
     /// Returns the number of Transformations stored in the DFA arena.
-    pub fn dfa_arena_len(&self) -> usize {
+    pub const fn dfa_arena_len(&self) -> usize {
         self.dfa.arena.len()
     }
 
@@ -988,18 +1060,18 @@ impl Engine {
         self.dfa.hash_to_state.len()
     }
 
-    /// Returns the capacity (in bytes) of the committed_text buffer.
-    pub fn committed_text_capacity(&self) -> usize {
+    /// Returns the capacity (in bytes) of the `committed_text` buffer.
+    pub const fn committed_text_capacity(&self) -> usize {
         self.committed_text.capacity()
     }
 
     /// Returns the number of active transformations in the current syllable.
-    pub fn active_len(&self) -> usize {
+    pub const fn active_len(&self) -> usize {
         self.active_len
     }
 
     /// Returns the number of snapshots stored for backspace.
-    pub fn snapshot_len(&self) -> usize {
+    pub const fn snapshot_len(&self) -> usize {
         self.snapshot_len
     }
 }

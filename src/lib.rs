@@ -4,6 +4,23 @@
 //! Ported from [bamboo-core](https://github.com/BambooEngine/bamboo-core) (Go).
 //!
 //! Supports **Telex**, **VNI**, **VIQR** input methods with custom rule support.
+
+#![warn(
+    clippy::undocumented_unsafe_blocks,
+    clippy::doc_markdown,
+    clippy::manual_let_else,
+    clippy::semicolon_if_nothing_returned,
+    clippy::match_same_arms,
+    clippy::missing_const_for_fn,
+    clippy::perf,
+    clippy::trivially_copy_pass_by_ref,
+    clippy::large_types_passed_by_value,
+    clippy::needless_collect,
+    clippy::or_fun_call,
+    clippy::format_push_string,
+    clippy::unnecessary_to_owned,
+    clippy::redundant_clone
+)]
 //!
 //! ## API Overview
 //!
@@ -11,7 +28,7 @@
 //! |---|---|---|
 //! | [`Engine::process_key`] | **IME integration (recommended)** | Process one keystroke, update internal state |
 //! | [`Engine::process_key_delta`] | **Text editor integration** | Like `process_key`, returns `(backspaces, inserted)` diff |
-//! | [`Engine::process`] | Convenience | Process a full string, return output |
+//! | [`Engine::process`] | Convenience (test only) | Process a full string, return output - **⚠️ Not for production** |
 //! | [`Engine::output`] | Read state | Get current composing word as `String` |
 //! | [`Engine::remove_last_char`] | Backspace | Undo last keystroke (O(1) via snapshot stack) |
 //! | [`Engine::remove_last_output_char`] | Backspace | Remove last output grapheme, keeping mark/tone on earlier chars |
@@ -182,8 +199,8 @@ pub mod parallel {
     }
 }
 
-pub use config::Config;
-pub use engine::{Engine, Transformation, TransformationStack};
+pub use config::{Config, ConfigBuilder};
+pub use engine::{Engine, RestoreMark, Transformation, TransformationStack};
 pub use input_method::InputMethod;
 pub use mode::{Mode, OutputOptions};
 
@@ -198,6 +215,6 @@ pub mod advanced {
 
     pub use crate::charset_def::{get_charset_definition, get_charset_definitions};
     pub use crate::dfa::{Dfa, State};
-    pub use crate::encoder::{encode, get_charset_name, get_charset_names};
+    pub use crate::encoder::{charset_names, encode, get_charset_name, get_charset_names};
     pub use crate::input_method_def::{get_input_method, get_input_method_definitions};
 }

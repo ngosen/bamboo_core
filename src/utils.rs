@@ -112,7 +112,7 @@ pub fn is_upper(c: char) -> bool {
 
 /// Returns true if the character is a space.
 #[inline]
-pub fn is_space(c: char) -> bool {
+pub const fn is_space(c: char) -> bool {
     c == ' '
 }
 
