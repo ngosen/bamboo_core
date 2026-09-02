@@ -1,4 +1,8 @@
 //! DFA-based engine for high-performance Vietnamese input method.
+//!
+//! This module provides the Deterministic Finite Automaton (DFA) state management,
+//! bitset fast-path transition lookups, arena allocation for transformations,
+//! and the JIT compiler for pre-compiling common syllable transitions.
 
 use crate::engine::Transformation;
 use crate::input_method::InputMethod;
@@ -10,16 +14,19 @@ const MAX_TRANS: usize = 24;
 /// A compact DFA state representing a unique syllable composition.
 ///
 /// Transitions are stored as sorted `(key, state_id)` pairs instead of a full
-/// 128-entry table. A 128-bit bitset enables O(1) "has transition?" checks
+/// 128-entry table. A 128-bit bitset enables $O(1)$ "has transition?" checks
 /// and fast rejection for keys that don't have transitions.
+///
+/// Memory layout is carefully aligned (160 bytes total) so that the hot fields
+/// (bitset, keys, hash, offset, lengths) reside within the first 64-byte cache line.
 #[repr(C)]
 #[derive(Clone, Debug)]
 pub struct State {
-    /// 128-bit bitset: bit i = 1 means key (i) has a transition (16 bytes: offset 0..16).
+    /// 128-bit bitset: bit `i = 1` means key `i` has a transition (16 bytes: offset 0..16).
     pub bitset: [u64; 2],
     /// Keys triggering transitions (24 bytes: offset 16..40).
     pub trans_keys: [u8; MAX_TRANS],
-    /// Precomputed hash of the composition for O(1) equality check (8 bytes: offset 40..48).
+    /// Precomputed hash of the composition for $O(1)$ equality check (8 bytes: offset 40..48).
     pub comp_hash: u64,
     /// Start index in the DFA arena (4 bytes: offset 48..52).
     pub comp_offset: u32,
@@ -52,7 +59,16 @@ impl Default for State {
 }
 
 impl State {
-    /// Looks up a transition by key. Uses bitset for O(1) rejection and SWAR for fast byte matching.
+    /// Looks up a transition by key.
+    ///
+    /// Uses the 128-bit bitset for $O(1)$ fast rejection and SWAR (SIMD-Within-A-Register)
+    /// 8-byte chunk scanning for finding matching keys without branch mispredictions.
+    ///
+    /// # Arguments
+    /// * `key` - ASCII byte of the key to look up.
+    ///
+    /// # Returns
+    /// The destination state ID (non-zero), or `0` if no transition exists.
     #[inline]
     pub const fn get_transition(&self, key: u8) -> u32 {
         // O(1) rejection: if the bit is not set, no transition exists.
@@ -110,7 +126,13 @@ impl State {
         0
     }
 
-    /// Sets a transition.
+    /// Sets or updates a transition from this state on a given key.
+    ///
+    /// Updates both the 128-bit bitset and the key/state arrays.
+    ///
+    /// # Arguments
+    /// * `key` - The ASCII key trigger.
+    /// * `state_id` - The target DFA state ID.
     #[inline]
     pub fn set_transition(&mut self, key: u8, state_id: u32) {
         let idx = key as usize;
@@ -132,11 +154,16 @@ impl State {
 }
 
 /// The DFA core that manages states and transitions with Arena Allocation.
+///
+/// Stores all unique composition states and provides fast $O(1)$ lookups
+/// without heap allocation during state transitions.
 #[derive(Debug)]
 pub struct Dfa {
+    /// Array of all DFA states. State 0 is always the initial (empty) state.
     pub states: Vec<State>,
+    /// Continuous arena storing transformation slices for all states.
     pub arena: Vec<Transformation>,
-    /// Maps composition hash → `state_id` for O(1) lookup (collision-free for distinct compositions).
+    /// Maps composition hash to `state_id` for $O(1)$ deduplication and lookup.
     pub hash_to_state: FxHashMap<u64, u32>,
 }
 
@@ -171,7 +198,7 @@ fn hash_composition(composition: &[Transformation]) -> u64 {
 }
 
 impl Dfa {
-    /// Creates a new DFA with an initial empty state.
+    /// Creates a new DFA with an initial empty state (state ID 0).
     pub fn new() -> Self {
         let mut dfa = Self {
             states: Vec::with_capacity(128),
@@ -183,10 +210,15 @@ impl Dfa {
         dfa
     }
 
+    /// Returns a reference to the [`State`] with the given ID.
+    ///
+    /// # Panics
+    /// Panics if `id as usize` is out of bounds of the `states` vector.
     pub fn get_state(&self, id: u32) -> &State {
         &self.states[id as usize]
     }
 
+    /// Retrieves the slice of [`Transformation`]s belonging to the specified state.
     pub fn get_composition(&self, state_id: u32) -> &[Transformation] {
         let state = &self.states[state_id as usize];
         let start = state.comp_offset as usize;
@@ -194,16 +226,19 @@ impl Dfa {
         &self.arena[start..end]
     }
 
+    /// Adds a new composition state to the DFA or returns the existing state ID if already present.
+    ///
+    /// Uses the precomputed hash and arena verification for fast collision-free deduplication.
     pub fn add_state(&mut self, composition: &[Transformation]) -> u32 {
         let hash = hash_composition(composition);
 
-        // Fast path: hash match → verify arena equality (no heap allocation).
+        // Fast path: hash match -> verify arena equality (no heap allocation).
         if let Some(&id) = self.hash_to_state.get(&hash) {
             let existing = self.get_composition(id);
             if existing == composition {
                 return id;
             }
-            // Hash collision — fall through to add new state.
+            // Hash collision -> fall through to add new state.
         }
 
         let id = self.states.len() as u32;
@@ -217,6 +252,7 @@ impl Dfa {
         id
     }
 
+    /// Finds the state ID corresponding to an existing composition slice, if present.
     pub fn find_state(&self, composition: &[Transformation]) -> Option<u32> {
         let hash = hash_composition(composition);
         let id = *self.hash_to_state.get(&hash)?;
@@ -229,17 +265,21 @@ impl Dfa {
     }
 }
 
-/// A DFA compiler that supports pre-initializing common states.
+/// A DFA compiler that pre-initializes common syllable states into a [`Dfa`].
 pub struct DfaCompiler<'a> {
+    /// The input method used for compiling transitions.
     #[allow(dead_code)]
     pub input_method: &'a InputMethod,
+    /// Bitmask configuration flags.
     #[allow(dead_code)]
     pub flags: u32,
+    /// The compiled DFA instance.
     pub dfa: Dfa,
     engine: crate::Engine,
 }
 
 impl<'a> DfaCompiler<'a> {
+    /// Creates a new compiler instance for a given input method and configuration flags.
     pub fn new(im: &'a InputMethod, flags: u32) -> Self {
         let engine = crate::Engine::with_config(im.clone(), crate::Config::from_flags(flags));
         Self { input_method: im, flags, dfa: Dfa::new(), engine }

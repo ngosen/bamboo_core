@@ -21,7 +21,7 @@ A high-performance Vietnamese input method engine (IME) core written in Rust, po
 
 ```toml
 [dependencies]
-bamboo-core = "0.3.22"
+bamboo-core = "0.3.23"
 ```
 
 ## Quick Start — IME Integration
@@ -104,8 +104,7 @@ assert_eq!(ins, "á");  // insert "á"
 
 Contract:
 ```text
-previous = [common_prefix] + [backspace_count chars to delete]
-new      = [common_prefix] + [inserted_suffix]
+previous = [common_prefix] + [backspace_count chars to delete]\nnew      = [common_prefix] + [inserted_suffix]
 ```
 Frontend does not need to compute LCP — the engine does it.
 
@@ -159,24 +158,25 @@ Bamboo Core is architected for zero heap allocations in the interactive typing l
 
 | Benchmark Scenario | Previous Baseline (`v0.3.19`) | Optimized (`v0.3.21`) | Speedup |
 |---|---|---|---|
-| Single word `tieengs` $\to$ `tiếng` | 108.9 ns | **87.8 ns** | **+19.4% faster** |
-| Short word `vietj` $\to$ `việt` | 71.0 ns | **58.7 ns** | **+17.3% faster** |
-| Compound word `nguwowif` $\to$ `người` | 131.4 ns | **106.6 ns** | **+18.9% faster** |
-| Long word `khuyeens` $\to$ `khuyến` | 131.0 ns | **108.9 ns** | **+16.9% faster** |
-| Interactive backspace (`tieengs` + 2 Del) | 245.5 ns | **212.8 ns** | **+13.3% faster** |
-| Sentence stream (23 characters) | 662.1 ns | **606.7 ns** | **+8.4% faster** |
-| Full sentence stream (27 characters) | 891.2 ns | **778.8 ns** | **+12.6% faster** |
-| Paragraph text stream (62 characters) | 1938.1 ns | **1766.7 ns** | **+8.8% faster** |
-| CamelCase `VieetjNam` $\to$ `ViệtNam` | 1261.7 ns | **1168.0 ns** | **+7.4% faster** |
-| Code / English passthrough (31 chars) | 1253.1 ns | **1176.7 ns** | **+6.1% faster** |
-| Mixed code line (`let mut buf...`) | 893.5 ns | **799.7 ns** | **+10.5% faster** |
+| Compound Word (`nghiengs`) | 54.34 ns/op | **43.79 ns/op** | **+19.4%** |
+| Random Keystroke Sequence | 1.100 µs/op | **948.1 ns/op** | **+13.8%** |
+| Worst-case Deep Syllable | 70.36 ns/op | **62.77 ns/op** | **+10.8%** |
+| Mixed Typing (Viet + English) | 6.545 µs/op | **5.748 µs/op** | **+12.2%** |
+| Rapid Backspace Burst | 277.6 ns/op | **256.4 ns/op** | **+7.6%** |
+| English Passthrough | 49.33 ns/op | **47.66 ns/op** | **+3.4%** |
+| Feed Benchmark | 88.08 ns/op | **87.21 ns/op** | **+1.0%** |
 
-## Credits
+*Benchmarks measured on x86_64 Linux, Rust 1.80+ release profile with Fat LTO.*
 
-- **Rust Port & Optimization:** Dao Trong Nguyen ([@nguyen10t2](https://github.com/nguyen10t2))
-- **Original Author (Go):** Lam ([@lamtq](https://github.com/t1ld3x))
-- **Technical Consultant:** Mai Tan Phat ([@phatMT97](https://github.com/phatMT97)) - Author of **VKey**
+## Architecture
+
+- **`Engine`**: Core state machine managing character buffer, keystroke history snapshots, and output formatting.
+- **`Dfa`**: JIT cache with Arena Allocation, 128-bit bitset fast rejection, and SWAR 8-byte chunk scanning for $O(1)$ state transitions.
+- **`InputMethod`**: Transformation rules for Telex, VNI, VIQR, and Microsoft layout with multi-character expansions.
+- **`Config`**: Runtime toggles for free tone placement, modern/traditional tone style, and auto-correct.
+- **`encoder`**: Zero-allocation encoding conversion supporting 16 Vietnamese legacy charsets (TCVN3, VNI-Windows, VIQR, VISCII, etc.).
+- **`ffi`**: C-ABI bindings for integration with C, C++, Python, Fcitx5, IBus, and native GUI toolkits.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT License. See [LICENSE](LICENSE) for details.

@@ -1,15 +1,44 @@
+//! Configuration options and builder for the Bamboo input method engine.
+//!
+//! Allows fine-tuning tone placement rules, free tone marking flexibility,
+//! and orthographic syllable validation.
+
 /// Configuration options for the Bamboo engine.
+///
+/// Use [`Config::default()`] for the standard modern Vietnamese input setup,
+/// or [`Config::builder()`] / [`ConfigBuilder`] to customize individual flags.
+///
+/// # Example
+/// ```rust
+/// use bamboo_core::Config;
+///
+/// let config = Config::builder()
+///     .free_tone_marking(true)
+///     .std_tone_style(true)
+///     .auto_correct(false)
+///     .build();
+///
+/// assert!(config.free_tone_marking);
+/// assert!(config.std_tone_style);
+/// assert!(!config.auto_correct);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Config {
-    /// If true, allows typing tone marks at any position in the word (Free Tone Marking).
-    /// Default: true.
+    /// If `true`, allows typing tone marks at any position in the word (Free Tone Marking).
+    /// For example, `hoangf` -> `hoàng`.
+    ///
+    /// Default: `true`.
     pub free_tone_marking: bool,
-    /// If true, uses the standard (new) tone placement (e.g., "hòa", "khỏe").
-    /// If false, uses the old style (e.g., "hoà", "khoẻ").
-    /// Default: true.
+    /// If `true`, uses the standard (new) tone placement (e.g., `hòa`, `khỏe`).
+    /// If `false`, uses the traditional (old) style (e.g., `hoà`, `khoẻ`).
+    ///
+    /// Default: `true`.
     pub std_tone_style: bool,
-    /// If true, enables automatic spelling correction to ensure valid Vietnamese syllables.
-    /// Default: true.
+    /// If `true`, enables automatic spelling correction to ensure valid Vietnamese syllables.
+    /// Invalid syllables (e.g. non-Vietnamese consonant clusters with marks) will automatically
+    /// fall back to raw characters.
+    ///
+    /// Default: `true`.
     pub auto_correct: bool,
 }
 
@@ -20,7 +49,7 @@ impl Default for Config {
 }
 
 impl Config {
-    /// Creates a new configuration with default values.
+    /// Creates a new configuration with all standard defaults enabled.
     pub const fn new() -> Self {
         Self { free_tone_marking: true, std_tone_style: true, auto_correct: true }
     }
@@ -44,7 +73,11 @@ impl Config {
         flags
     }
 
-    /// Creates a configuration from a bitmask of flags.
+    /// Creates a configuration from an integer bitmask of flags.
+    ///
+    /// - Bit 0 (0x01): `free_tone_marking`
+    /// - Bit 1 (0x02): `std_tone_style`
+    /// - Bit 2 (0x04): `auto_correct`
     pub const fn from_flags(flags: u32) -> Self {
         Self {
             free_tone_marking: (flags & (1 << 0)) != 0,
@@ -72,7 +105,7 @@ impl ConfigBuilder {
         self
     }
 
-    /// Sets whether standard tone style is enabled.
+    /// Sets whether standard (new) tone style is enabled (`hòa` vs `hoà`).
     pub const fn std_tone_style(mut self, enabled: bool) -> Self {
         self.config.std_tone_style = enabled;
         self
@@ -112,7 +145,7 @@ mod tests {
     #[test]
     fn default_config_flags() {
         let cfg = Config::default();
-        // Default: all three enabled → flags = 0b111 = 7
+        // Default: all three enabled -> flags = 0b111 = 7
         assert_eq!(cfg.to_flags(), 7);
     }
 
