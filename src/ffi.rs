@@ -3,10 +3,7 @@
 //! This module provides an `extern "C"` API for integrating Bamboo with
 //! other languages like C, C++, Python, and IME frameworks (Fcitx5, `IBus`).
 
-// Unsafe extern "C" fns operate on raw pointers validated by the caller; the
-// bodies dereference them directly without per-op unsafe blocks (edition 2024
-// would otherwise flag each deref).
-#![allow(unsafe_op_in_unsafe_fn)]
+#![deny(unsafe_op_in_unsafe_fn)]
 
 use std::ffi::CString;
 use std::os::raw::c_char;
@@ -34,6 +31,12 @@ pub enum BambooMethod {
     Telex2 = 4,
     /// Telex W input method.
     TelexW = 5,
+    /// Telex + VNI hybrid method.
+    TelexVni = 6,
+    /// Telex + VNI + VIQR combination method.
+    TelexVniViqr = 7,
+    /// VNI French layout method.
+    VniFrenchLayout = 8,
 }
 
 impl BambooMethod {
@@ -45,6 +48,9 @@ impl BambooMethod {
             3 => Self::MicrosoftLayout,
             4 => Self::Telex2,
             5 => Self::TelexW,
+            6 => Self::TelexVni,
+            7 => Self::TelexVniViqr,
+            8 => Self::VniFrenchLayout,
             _ => Self::Telex,
         }
     }
@@ -58,6 +64,9 @@ impl BambooMethod {
             Self::MicrosoftLayout => InputMethod::microsoft_layout(),
             Self::Telex2 => InputMethod::telex_2(),
             Self::TelexW => InputMethod::telex_w(),
+            Self::TelexVni => InputMethod::telex_vni(),
+            Self::TelexVniViqr => InputMethod::telex_vni_viqr(),
+            Self::VniFrenchLayout => InputMethod::vni_french_layout(),
         }
     }
 }
@@ -106,6 +115,9 @@ pub extern "C" fn bamboo_reset() {
 ///     * 3: Microsoft Layout
 ///     * 4: Telex 2
 ///     * 5: Telex W
+///     * 6: Telex + VNI
+///     * 7: Telex + VNI + VIQR
+///     * 8: VNI French Layout
 #[unsafe(no_mangle)]
 pub extern "C" fn bamboo_set_input_method(method: i32) {
     let im = BambooMethod::from_i32(method).to_input_method();
@@ -160,9 +172,9 @@ pub unsafe extern "C" fn bamboo_process_key_buf(
         return -1;
     }
 
-    let out_len = &mut *out_len;
-    let backspaces_chars = &mut *backspaces_chars;
-    let backspaces_bytes = &mut *backspaces_bytes;
+    // SAFETY: pointers were checked non-null and caller guarantees alignment and validity.
+    let (out_len, backspaces_chars, backspaces_bytes) =
+        unsafe { (&mut *out_len, &mut *backspaces_chars, &mut *backspaces_bytes) };
 
     let mode = if is_vietnamese != 0 { Mode::Vietnamese } else { Mode::English };
 
@@ -198,7 +210,10 @@ pub unsafe extern "C" fn bamboo_process_key_buf(
         if out_buf.is_null() {
             return -1;
         }
-        ptr::copy_nonoverlapping(bytes.as_ptr(), out_buf, bytes.len());
+        // SAFETY: caller guarantees out_buf points to at least out_cap bytes and bytes.len() <= out_cap.
+        unsafe {
+            ptr::copy_nonoverlapping(bytes.as_ptr(), out_buf, bytes.len());
+        }
     }
 
     0
@@ -232,7 +247,8 @@ pub extern "C" fn bamboo_remove_last_char() {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn bamboo_free_string(s: *mut c_char) {
     if !s.is_null() {
-        let _ = CString::from_raw(s);
+        // SAFETY: caller guarantees s was allocated via CString::into_raw by this library.
+        let _ = unsafe { CString::from_raw(s) };
     }
 }
 
@@ -245,7 +261,7 @@ pub type BambooEngine = Engine;
 ///
 /// # Arguments
 ///
-/// * `method` - An integer representing the input method (0: Telex, 1: VNI, 2: VIQR, 3: Microsoft layout, 4: Telex 2, 5: Telex W).
+/// * `method` - An integer representing the input method (0: Telex, 1: VNI, 2: VIQR, 3: Microsoft layout, 4: Telex 2, 5: Telex W, 6: Telex+VNI, 7: Telex+VNI+VIQR, 8: VNI French).
 ///
 /// # Returns
 ///
@@ -265,7 +281,8 @@ pub extern "C" fn bamboo_engine_new(method: i32) -> *mut BambooEngine {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn bamboo_engine_free(engine: *mut BambooEngine) {
     if !engine.is_null() {
-        let _ = Box::from_raw(engine);
+        // SAFETY: caller guarantees engine was created by bamboo_engine_new and not previously freed.
+        let _ = unsafe { Box::from_raw(engine) };
     }
 }
 
@@ -276,10 +293,10 @@ pub unsafe extern "C" fn bamboo_engine_free(engine: *mut BambooEngine) {
 /// - The caller is responsible for freeing the returned string using `bamboo_free_string`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn bamboo_engine_process(engine: *mut BambooEngine, key: u32) -> *mut c_char {
-    if engine.is_null() {
+    // SAFETY: engine pointer checked for non-null and safely converted to a mutable reference.
+    let Some(e) = (unsafe { engine.as_mut() }) else {
         return ptr::null_mut();
-    }
-    let e = &mut *engine;
+    };
     if let Some(c) = std::char::from_u32(key) {
         e.process_key(c, Mode::Vietnamese);
     }
@@ -295,10 +312,10 @@ pub unsafe extern "C" fn bamboo_engine_process(engine: *mut BambooEngine, key: u
 /// - `engine` must be a valid, non-null pointer to a `BambooEngine` instance.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn bamboo_engine_remove_last_output_char(engine: *mut BambooEngine) {
-    if engine.is_null() {
+    // SAFETY: engine pointer checked for non-null and safely converted to a mutable reference.
+    let Some(e) = (unsafe { engine.as_mut() }) else {
         return;
-    }
-    let e = &mut *engine;
+    };
     e.remove_last_output_char();
 }
 
@@ -319,20 +336,20 @@ pub unsafe extern "C" fn bamboo_engine_process_key_buf(
     backspaces_chars: *mut usize,
     backspaces_bytes: *mut usize,
 ) -> i32 {
-    if engine.is_null() {
+    // SAFETY: engine pointer checked for non-null and safely converted to a mutable reference.
+    let Some(e) = (unsafe { engine.as_mut() }) else {
         return -2;
-    }
+    };
     if out_len.is_null() || backspaces_chars.is_null() || backspaces_bytes.is_null() {
         return -1;
     }
 
-    let out_len = &mut *out_len;
-    let backspaces_chars = &mut *backspaces_chars;
-    let backspaces_bytes = &mut *backspaces_bytes;
+    // SAFETY: pointers were verified non-null and caller guarantees proper alignment and lifetime.
+    let (out_len, backspaces_chars, backspaces_bytes) =
+        unsafe { (&mut *out_len, &mut *backspaces_chars, &mut *backspaces_bytes) };
 
     let mode = if is_vietnamese != 0 { Mode::Vietnamese } else { Mode::English };
 
-    let e = &mut *engine;
     let Some(c) = std::char::from_u32(key) else {
         *out_len = 0;
         *backspaces_chars = 0;
@@ -354,8 +371,137 @@ pub unsafe extern "C" fn bamboo_engine_process_key_buf(
         if out_buf.is_null() {
             return -1;
         }
-        ptr::copy_nonoverlapping(bytes.as_ptr(), out_buf, bytes.len());
+        // SAFETY: caller guarantees out_buf points to at least out_cap bytes and bytes.len() <= out_cap.
+        unsafe {
+            ptr::copy_nonoverlapping(bytes.as_ptr(), out_buf, bytes.len());
+        }
     }
 
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::CStr;
+
+    #[test]
+    fn test_bamboo_method_roundtrip() {
+        let methods = [
+            (BambooMethod::Telex, 0),
+            (BambooMethod::Vni, 1),
+            (BambooMethod::Viqr, 2),
+            (BambooMethod::MicrosoftLayout, 3),
+            (BambooMethod::Telex2, 4),
+            (BambooMethod::TelexW, 5),
+            (BambooMethod::TelexVni, 6),
+            (BambooMethod::TelexVniViqr, 7),
+            (BambooMethod::VniFrenchLayout, 8),
+        ];
+
+        for (method, id) in methods {
+            assert_eq!(BambooMethod::from_i32(id), method);
+            let im = method.to_input_method();
+            assert!(!im.rules.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_ffi_engine_lifecycle_and_process() {
+        let engine = bamboo_engine_new(0); // Telex
+        assert!(!engine.is_null());
+
+        // SAFETY: `engine` was verified non-null and valid.
+        unsafe {
+            // Type "tieengs" -> "tiếng"
+            for ch in "tieengs".chars() {
+                let res_ptr = bamboo_engine_process(engine, ch as u32);
+                assert!(!res_ptr.is_null());
+                bamboo_free_string(res_ptr);
+            }
+
+            // Remove last output char
+            bamboo_engine_remove_last_output_char(engine);
+
+            // Null engine safety check (should not crash)
+            assert!(bamboo_engine_process(ptr::null_mut(), 'a' as u32).is_null());
+            bamboo_engine_remove_last_output_char(ptr::null_mut());
+
+            bamboo_engine_free(engine);
+            bamboo_engine_free(ptr::null_mut()); // Freeing null should be a no-op
+        }
+    }
+
+    #[test]
+    fn test_ffi_process_key_buf() {
+        let engine = bamboo_engine_new(0); // Telex
+        assert!(!engine.is_null());
+
+        let mut buf = [0u8; 64];
+        let mut out_len = 0usize;
+        let mut bs_chars = 0usize;
+        let mut bs_bytes = 0usize;
+
+        // SAFETY: `engine` and buffers are valid stack/allocated memory.
+        unsafe {
+            let ret = bamboo_engine_process_key_buf(
+                engine,
+                'a' as u32,
+                1,
+                buf.as_mut_ptr(),
+                buf.len(),
+                &mut out_len,
+                &mut bs_chars,
+                &mut bs_bytes,
+            );
+            assert_eq!(ret, 0);
+            assert_eq!(out_len, 1);
+            assert_eq!(buf[0], b'a');
+
+            // Null checks
+            assert_eq!(
+                bamboo_engine_process_key_buf(
+                    ptr::null_mut(),
+                    'a' as u32,
+                    1,
+                    buf.as_mut_ptr(),
+                    buf.len(),
+                    &mut out_len,
+                    &mut bs_chars,
+                    &mut bs_bytes,
+                ),
+                -2
+            );
+
+            bamboo_engine_free(engine);
+        }
+    }
+
+    #[test]
+    fn test_ffi_global_engine() {
+        bamboo_setup();
+        bamboo_reset();
+
+        let s1 = bamboo_process_key('a' as u32, 1);
+        let s2 = bamboo_process_key('s' as u32, 1);
+
+        // SAFETY: `s2` is a valid C-string returned by `bamboo_process_key`.
+        unsafe {
+            let cstr = CStr::from_ptr(s2);
+            assert_eq!(cstr.to_str().unwrap(), "á");
+            bamboo_free_string(s1);
+            bamboo_free_string(s2);
+        }
+
+        let out = bamboo_output();
+        // SAFETY: `out` is a valid C-string returned by `bamboo_output`.
+        unsafe {
+            let cstr = CStr::from_ptr(out);
+            assert_eq!(cstr.to_str().unwrap(), "á");
+            bamboo_free_string(out);
+        }
+
+        bamboo_remove_last_char();
+        bamboo_reset();
+    }
 }
