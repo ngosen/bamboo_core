@@ -121,7 +121,6 @@ mod encoder;
 mod engine;
 mod flattener;
 mod input_method;
-mod input_method_def;
 mod mode;
 mod phonetics;
 mod spelling;
@@ -168,6 +167,7 @@ pub use encoder::{Charset, encode_charset};
 pub(crate) use encoder::tables as charset_def;
 pub use engine::{Engine, EngineRules, RestoreMark, Transformation, TransformationStack};
 pub use input_method::{InputMethod, InputMethodPreset};
+pub(crate) use input_method::definitions as input_method_def;
 pub use mode::{Mode, OutputOptions};
 
 /// Advanced types for low-level interaction with the engine.

@@ -2,78 +2,11 @@ use std::sync::Arc;
 use crate::engine::EngineRules;
 use std::sync::LazyLock;
 
-/// Standard input method presets supported natively by Bamboo.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
-pub enum InputMethodPreset {
-    /// Standard Telex input method.
-    #[default]
-    Telex,
-    /// Standard VNI input method (using numeric tone/diacritic keys).
-    Vni,
-    /// Standard VIQR input method.
-    Viqr,
-    /// Microsoft Standard Vietnamese keyboard layout.
-    MicrosoftLayout,
-    /// Telex variant that also supports `[` and `]` keys for horns.
-    Telex2,
-    /// Combined Telex and VNI.
-    TelexVni,
-    /// Combined Telex, VNI, and VIQR.
-    TelexVniViqr,
-    /// VNI for French keyboard layouts.
-    VniFrenchLayout,
-    /// Telex variant using `w` for marks and `z` for tone removal.
-    TelexW,
-}
+pub mod preset;
+pub mod rule;
 
-impl InputMethodPreset {
-    /// Returns the canonical name of the preset.
-    pub const fn name(&self) -> &'static str {
-        match self {
-            Self::Telex => "Telex",
-            Self::Vni => "VNI",
-            Self::Viqr => "VIQR",
-            Self::MicrosoftLayout => "Microsoft layout",
-            Self::Telex2 => "Telex 2",
-            Self::TelexVni => "Telex + VNI",
-            Self::TelexVniViqr => "Telex + VNI + VIQR",
-            Self::VniFrenchLayout => "VNI Bàn phím tiếng Pháp",
-            Self::TelexW => "Telex W",
-        }
-    }
-
-    /// Returns a pre-parsed [`InputMethod`] instance for this preset.
-    pub fn to_input_method(self) -> InputMethod {
-        (*get_preset_shared(self).0).clone()
-    }
-}
-
-impl std::fmt::Display for InputMethodPreset {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.name())
-    }
-}
-
-impl std::str::FromStr for InputMethodPreset {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "telex" => Ok(Self::Telex),
-            "vni" => Ok(Self::Vni),
-            "viqr" => Ok(Self::Viqr),
-            "microsoft" | "microsoft layout" | "microsoft_layout" => Ok(Self::MicrosoftLayout),
-            "telex2" | "telex 2" | "telex_2" => Ok(Self::Telex2),
-            "telex+vni" | "telex + vni" | "telex_vni" => Ok(Self::TelexVni),
-            "telex+vni+viqr" | "telex + vni + viqr" | "telex_vni_viqr" => Ok(Self::TelexVniViqr),
-            "vni french" | "vni_french" | "vni bàn phím tiếng pháp" | "vni ban phim tieng phap" => {
-                Ok(Self::VniFrenchLayout)
-            }
-            "telexw" | "telex w" | "telex_w" => Ok(Self::TelexW),
-            _ => Err(format!("Unknown input method preset: '{}'", s)),
-        }
-    }
-}
+pub use preset::InputMethodPreset;
+pub use rule::{EffectType, Mark, Rule, Tone};
 
 static PRESET_TELEX_SHARED: LazyLock<(Arc<InputMethod>, Arc<EngineRules>)> =
     LazyLock::new(|| {
@@ -165,130 +98,11 @@ pub(crate) fn find_preset_shared(im: &InputMethod) -> Option<(Arc<InputMethod>, 
     }
 }
 
-use phf::{Map, phf_map};
-
-use crate::input_method_def::InputMethodDef;
+pub mod definitions;
+pub use definitions::InputMethodDef;
 use crate::phonetics::{add_mark_to_toneless_char, add_tone_to_char, is_vowel};
 
-/// Represents a Vietnamese tone mark.
-#[repr(u8)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Tone {
-    /// No tone.
-    None = 0,
-    /// Grave accent.
-    Grave = 1,
-    /// Acute accent.
-    Acute = 2,
-    /// Hook above.
-    Hook = 3,
-    /// Tilde.
-    Tilde = 4,
-    /// Dot below.
-    Dot = 5,
-}
-
-/// Represents a Vietnamese diacritic mark (marks that change the vowel/consonant).
-#[repr(u8)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Mark {
-    /// No diacritic.
-    None = 0,
-    /// Circumflex (Â, Ê, Ô).
-    Hat = 1,
-    /// Breve (Ă).
-    Breve = 2,
-    /// Horn (Ư, Ơ).
-    Horn = 3,
-    /// Dash (Đ).
-    Dash = 4,
-    /// Special mark for raw character restoration.
-    Raw = 5,
-}
-
-/// The type of transformation a rule applies.
-#[repr(u8)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub enum EffectType {
-    /// Appends a character (standard typing).
-    #[default]
-    Appending = 0,
-    /// Adds/changes a diacritic mark.
-    MarkTransformation = 1,
-    /// Adds/changes a tone mark.
-    ToneTransformation = 2,
-    /// Replaces a character with another.
-    Replacing = 3,
-}
-
-static TONES: Map<&'static str, Tone> = phf_map! {
-    "XoaDauThanh" => Tone::None,
-    "DauSac" => Tone::Acute,
-    "DauHuyen" => Tone::Grave,
-    "DauNga" => Tone::Tilde,
-    "DauNang" => Tone::Dot,
-    "DauHoi" => Tone::Hook,
-};
-
-/// A transformation rule that defines how a key press affects the composition.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub struct Rule {
-    /// The key that triggers this rule.
-    pub key: char,
-    /// The character that this rule targets (to be replaced or marked).
-    pub effect_on: char,
-    /// The resulting character after applying the transformation.
-    pub result: char,
-    /// Additional characters to append immediately after this one (used for multi-character shortcuts).
-    pub appended: [char; 2],
-    /// Effect value:
-    /// - if `effect_type == ToneTransformation`: this is a [`Tone`] as `u8`
-    /// - if `effect_type == MarkTransformation`: this is a [`Mark`] as `u8`
-    pub effect: u8,
-    /// The type of transformation to apply.
-    pub effect_type: EffectType,
-    /// Number of characters in `appended`.
-    pub appended_len: u8,
-}
-
-const _: () = assert!(std::mem::size_of::<Rule>() <= 24);
-
-impl Rule {
-    /// Sets the effect value from a [`Tone`].
-    pub const fn set_tone(&mut self, tone: Tone) {
-        self.effect = tone as u8;
-    }
-
-    /// Sets the effect value from a [`Mark`].
-    pub const fn set_mark(&mut self, mark: Mark) {
-        self.effect = mark as u8;
-    }
-
-    /// Retrieves the effect value as a [`Tone`].
-    pub const fn get_tone(&self) -> Tone {
-        // Safety: effect is created by parser or engine.
-        match self.effect {
-            1 => Tone::Grave,
-            2 => Tone::Acute,
-            3 => Tone::Hook,
-            4 => Tone::Tilde,
-            5 => Tone::Dot,
-            _ => Tone::None,
-        }
-    }
-
-    /// Retrieves the effect value as a [`Mark`].
-    pub const fn get_mark(&self) -> Mark {
-        match self.effect {
-            1 => Mark::Hat,
-            2 => Mark::Breve,
-            3 => Mark::Horn,
-            4 => Mark::Dash,
-            5 => Mark::Raw,
-            _ => Mark::None,
-        }
-    }
-}
+use rule::TONES;
 
 /// A collection of rules defining how keys transform text.
 ///
