@@ -13,6 +13,7 @@ pub(crate) fn flatten_slice(composition: &[Transformation], options: OutputOptio
 }
 
 /// Similar to [`flatten_slice`], but writes the result into an existing string buffer.
+#[allow(dead_code)]
 pub(crate) fn flatten_slice_into(
     composition: &[Transformation],
     options: OutputOptions,

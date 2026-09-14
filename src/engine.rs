@@ -155,6 +155,8 @@ fn uoh_tail_match(s: &str) -> bool {
 #[derive(Debug)]
 pub struct Engine {
     committed_text: String,
+    /// Cached preedit string of the active composition for zero-allocation [`output()`](Self::output).
+    cached_output: String,
     /// Stack-allocated buffer for the active composition to avoid heap allocations.
     active_buffer: [Transformation; MAX_ACTIVE_TRANS],
     active_len: usize,
@@ -244,6 +246,7 @@ impl Engine {
 
         Self {
             committed_text: String::with_capacity(128),
+            cached_output: String::with_capacity(32),
             active_buffer: [Transformation::default(); MAX_ACTIVE_TRANS],
             active_len: 0,
             input_method,
@@ -285,10 +288,23 @@ impl Engine {
         self.active_len = 0;
     }
 
+    #[inline]
+    fn update_cached_output(&mut self) {
+        self.cached_output.clear();
+        if self.active_len > 0 {
+            crate::flattener::append_flatten_slice(
+                &self.active_buffer[..self.active_len],
+                OutputOptions::NONE,
+                &mut self.cached_output,
+            );
+        }
+    }
+
     fn set_active_from_stack(&mut self, src: &mut TransformationStack) {
         self.active_len = src.len().min(MAX_ACTIVE_TRANS);
         self.active_buffer[..self.active_len].copy_from_slice(src.as_slice());
         src.clear();
+        self.update_cached_output();
     }
 
     #[inline]
@@ -631,12 +647,8 @@ impl Engine {
     pub fn process_key_delta(&mut self, key: char, mode: Mode) -> (usize, usize, &str) {
         self.process_key(key, mode);
 
-        let active_len = self.active_len;
-        let active = &self.active_buffer[..active_len];
-        crate::flattener::flatten_slice_into(active, OutputOptions::NONE, &mut self.delta_buf);
-
         let (_prefix_len, lcp_bytes) =
-            Self::lcp_chars_and_bytes(&self.prev_preedit, &self.delta_buf);
+            Self::lcp_chars_and_bytes(&self.prev_preedit, &self.cached_output);
 
         let prev_bytes = self.prev_preedit.len();
 
@@ -644,6 +656,8 @@ impl Engine {
         let backspace_count = self.prev_preedit[lcp_bytes..].chars().count();
         let backspaces_bytes = prev_bytes.saturating_sub(lcp_bytes);
 
+        self.delta_buf.clear();
+        self.delta_buf.push_str(&self.cached_output);
         std::mem::swap(&mut self.prev_preedit, &mut self.delta_buf);
         let inserted_suffix = &self.prev_preedit[lcp_bytes..];
         (backspace_count, backspaces_bytes, inserted_suffix)
@@ -674,6 +688,11 @@ impl Engine {
     /// in a row undoes the tone and types the key as a literal letter
     /// (e.g. `ass` → `as`).
     pub fn process_key(&mut self, key: char, mode: Mode) {
+        self.process_key_internal(key, mode);
+        self.update_cached_output();
+    }
+
+    fn process_key_internal(&mut self, key: char, mode: Mode) {
         let lower_key = lower(key);
         let is_upper_case = is_upper(key);
 
@@ -838,6 +857,7 @@ impl Engine {
         self.active_buffer[self.active_len] = trans;
         self.active_len += 1;
         self.current_state_id = self.dfa.find_state(self.active_slice()).unwrap_or(0);
+        self.update_cached_output();
     }
 
     /// Clears the active syllable buffer and appends it to the committed text.
@@ -845,30 +865,32 @@ impl Engine {
         if self.active_len == 0 {
             return;
         }
-        // Copy active transformations to stack buffer to avoid borrow conflict.
-        // This is a fixed 448-byte memcpy (16 × 28 bytes) — no heap allocation.
-        // Still better than the old approach which allocated a String via output().
-        let mut comp = [Transformation::default(); MAX_ACTIVE_TRANS];
-        comp[..self.active_len].copy_from_slice(&self.active_buffer[..self.active_len]);
-        let len = self.active_len;
-        self.active_len = 0;
         crate::flattener::append_flatten_slice(
-            &comp[..len],
+            &self.active_buffer[..self.active_len],
             OutputOptions::NONE,
             &mut self.committed_text,
         );
+        self.cached_output.clear();
+        self.active_len = 0;
         self.current_state_id = 0;
         self.snapshot_len = 0;
         self.english_bypass = false;
     }
 
+    /// Returns the currently active syllable as a borrowed string slice.
+    ///
+    /// This performs **zero heap allocations**, borrowing directly from the engine's internal preedit cache.
+    #[inline]
+    pub fn output_str(&self) -> &str {
+        &self.cached_output
+    }
+
     /// Returns the currently active syllable as a string slice or owned string.
+    ///
+    /// This returns a zero-allocation [`Cow::Borrowed`] pointing to the internal preedit cache.
+    #[inline]
     pub fn output(&self) -> Cow<'_, str> {
-        if self.active_len == 0 {
-            Cow::Borrowed("")
-        } else {
-            Cow::Owned(crate::flattener::flatten_slice(self.active_slice(), OutputOptions::NONE))
-        }
+        Cow::Borrowed(&self.cached_output)
     }
 
     /// Returns the processed string as a [`Cow<str>`] according to the specified options.
@@ -880,9 +902,9 @@ impl Engine {
             if active.is_empty() {
                 return Cow::Borrowed(&self.committed_text);
             }
-            let mut result = String::with_capacity(self.committed_text.len() + active.len() * 4);
+            let mut result = String::with_capacity(self.committed_text.len() + self.cached_output.len());
             result.push_str(&self.committed_text);
-            crate::flattener::append_flatten_slice(active, options, &mut result);
+            result.push_str(&self.cached_output);
             return Cow::Owned(result);
         }
         if options.contains(OutputOptions::PUNCTUATION_MODE) {
@@ -897,6 +919,8 @@ impl Engine {
         }
         if active.is_empty() {
             Cow::Borrowed("")
+        } else if options == OutputOptions::NONE {
+            Cow::Borrowed(&self.cached_output)
         } else {
             Cow::Owned(crate::flattener::flatten_slice(active, options))
         }
@@ -990,6 +1014,7 @@ impl Engine {
                 self.config.std_tone_style,
             );
         }
+        self.update_cached_output();
     }
 
     /// Removes the last output character (grapheme) from the active composition,
@@ -1032,11 +1057,13 @@ impl Engine {
                 self.config.std_tone_style,
             );
         }
+        self.update_cached_output();
     }
 
     /// Resets the engine state, clearing committed and active text.
     pub fn reset(&mut self) {
         self.committed_text.clear();
+        self.cached_output.clear();
         self.active_len = 0;
         self.prev_preedit.clear();
         self.delta_buf.clear();
@@ -1240,5 +1267,25 @@ mod tests {
         assert_eq!(e.output(), "");
         e.remove_last_output_char();
         assert_eq!(e.output(), "");
+    }
+
+    #[test]
+    fn test_zero_allocation_output() {
+        let mut e = Engine::new(InputMethod::telex());
+        assert_eq!(e.output(), "");
+        assert!(matches!(e.output(), Cow::Borrowed(_)));
+        assert_eq!(e.output_str(), "");
+
+        e.process_str("tieengs", Mode::Vietnamese);
+        assert_eq!(e.output(), "ti\u{1ebf}ng");
+        assert!(matches!(e.output(), Cow::Borrowed(_)));
+        assert_eq!(e.output_str(), "ti\u{1ebf}ng");
+
+        // commit() clears cache
+        e.commit();
+        assert_eq!(e.output(), "");
+        assert!(matches!(e.output(), Cow::Borrowed(_)));
+        assert_eq!(e.output_str(), "");
+        assert_eq!(e.get_processed_str(OutputOptions::FULL_TEXT), "ti\u{1ebf}ng");
     }
 }
