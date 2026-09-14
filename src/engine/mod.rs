@@ -6,329 +6,19 @@ use std::sync::Arc;
 use std::borrow::Cow;
 
 use crate::config::Config;
-use crate::input_method::{EffectType, InputMethod, Mark, Rule, Tone};
+use crate::input_method::{EffectType, InputMethod, Mark, Rule};
 use crate::mode::{Mode, OutputOptions};
 use crate::phonetics::{is_upper, lower};
 
-/// Options for restoring or refreshing tone targets when removing characters.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum RestoreMark {
-    /// Refresh the last tone target to maintain valid tone placement.
-    #[default]
-    Yes,
-    /// Do not refresh the last tone target.
-    No,
-}
+pub mod restore;
+pub mod rules;
+pub mod snapshot;
+pub mod state;
 
-impl From<bool> for RestoreMark {
-    fn from(v: bool) -> Self {
-        if v { Self::Yes } else { Self::No }
-    }
-}
-
-impl From<RestoreMark> for bool {
-    fn from(r: RestoreMark) -> Self {
-        matches!(r, RestoreMark::Yes)
-    }
-}
-
-/// Maximum number of active transformations in a single syllable.
-pub const MAX_ACTIVE_TRANS: usize = 16;
-
-/// A lightweight snapshot of the engine state before a keystroke, used for O(1) backspace.
-#[derive(Clone, Copy, Debug)]
-struct Snapshot {
-    active_buffer: [Transformation; MAX_ACTIVE_TRANS],
-    active_len: usize,
-    current_state_id: u32,
-    english_bypass: bool,
-}
-
-/// Sentinel value representing `None` for a transformation target index.
-pub const TARGET_NONE: u8 = 0xFF;
-
-/// Represents a single keypress or a transformation derived from it (e.g., adding a mark or tone).
-///
-/// Compacted to exactly 16 bytes (128-bit aligned) for optimal CPU cache utilization and zero heap waste.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct Transformation {
-    /// The key that triggered this transformation (or `\0` if synthetic/virtual).
-    pub key: char,
-    /// The character that this transformation targets / replaces.
-    pub effect_on: char,
-    /// The resulting character after transformation.
-    pub result: char,
-    /// The index of the targeted transformation in the composition (`0xFF` = None).
-    target_idx: u8,
-    /// Transformation effect value (Tone or Mark enum value).
-    pub effect: u8,
-    /// Type of transformation (Appending, Mark, Tone, Replacing).
-    pub effect_type: EffectType,
-    /// Whether the resulting character should be rendered uppercase.
-    pub is_upper_case: bool,
-}
-
-const _: () = assert!(std::mem::size_of::<Transformation>() == 16);
-
-impl Default for Transformation {
-    #[inline]
-    fn default() -> Self {
-        Self {
-            key: '\0',
-            effect_on: '\0',
-            result: '\0',
-            target_idx: TARGET_NONE,
-            effect: 0,
-            effect_type: EffectType::Appending,
-            is_upper_case: false,
-        }
-    }
-}
-
-impl Transformation {
-    /// Creates a new transformation from explicit fields.
-    #[inline]
-    pub const fn new(
-        key: char,
-        effect_on: char,
-        result: char,
-        target: Option<u8>,
-        effect: u8,
-        effect_type: EffectType,
-        is_upper_case: bool,
-    ) -> Self {
-        let target_idx = match target {
-            Some(idx) => idx,
-            None => TARGET_NONE,
-        };
-        Self { key, effect_on, result, target_idx, effect, effect_type, is_upper_case }
-    }
-
-    /// Creates a new transformation from a [`Rule`].
-    #[inline]
-    pub const fn from_rule(rule: Rule, target: Option<u8>, is_upper_case: bool) -> Self {
-        Self::new(
-            rule.key,
-            rule.effect_on,
-            rule.result,
-            target,
-            rule.effect,
-            rule.effect_type,
-            is_upper_case,
-        )
-    }
-
-    /// Returns the target transformation index, if any.
-    #[inline]
-    pub const fn target(&self) -> Option<u8> {
-        if self.target_idx == TARGET_NONE { None } else { Some(self.target_idx) }
-    }
-
-    /// Returns the raw target index (`0xFF` for None).
-    #[inline]
-    pub const fn target_raw(&self) -> u8 {
-        self.target_idx
-    }
-
-    /// Sets or clears the target transformation index.
-    #[inline]
-    pub fn set_target(&mut self, target: Option<u8>) {
-        self.target_idx = target.unwrap_or(TARGET_NONE);
-    }
-
-    /// Returns true if this transformation has a target.
-    #[inline]
-    pub const fn has_target(&self) -> bool {
-        self.target_idx != TARGET_NONE
-    }
-
-    /// Retrieves the effect value as a [`Tone`].
-    #[inline]
-    pub const fn tone(&self) -> Tone {
-        match self.effect {
-            1 => Tone::Grave,
-            2 => Tone::Acute,
-            3 => Tone::Hook,
-            4 => Tone::Tilde,
-            5 => Tone::Dot,
-            _ => Tone::None,
-        }
-    }
-}
-
-/// A stack-allocated buffer for transformations to avoid heap allocations in the hot path.
-///
-/// This structure uses a fixed-size array and is extremely fast for frequent updates.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Hash)]
-pub struct TransformationStack {
-    data: [Transformation; MAX_ACTIVE_TRANS],
-    len: usize,
-}
-
-impl TransformationStack {
-    /// Creates a new, empty transformation stack.
-    pub fn new() -> Self {
-        Self { data: [Transformation::default(); MAX_ACTIVE_TRANS], len: 0 }
-    }
-
-    /// Pushes a new transformation onto the stack.
-    /// Does nothing if the stack is full.
-    pub fn push(&mut self, t: Transformation) {
-        debug_assert!(
-            self.len < MAX_ACTIVE_TRANS,
-            "TransformationStack overflow: max {MAX_ACTIVE_TRANS} reached"
-        );
-        if self.len < MAX_ACTIVE_TRANS {
-            self.data[self.len] = t;
-            self.len += 1;
-        }
-    }
-
-    /// Removes and returns the last transformation from the stack.
-    #[allow(dead_code)]
-    pub const fn pop(&mut self) -> Option<Transformation> {
-        if self.len > 0 {
-            self.len -= 1;
-            Some(self.data[self.len])
-        } else {
-            None
-        }
-    }
-
-    /// Clears all transformations from the stack.
-    pub const fn clear(&mut self) {
-        self.len = 0;
-    }
-
-    /// Returns the number of transformations currently in the stack.
-    pub const fn len(&self) -> usize {
-        self.len
-    }
-
-    /// Returns true if the stack contains no transformations.
-    pub const fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-
-    /// Returns a slice containing all transformations in the stack.
-    pub fn as_slice(&self) -> &[Transformation] {
-        &self.data[..self.len]
-    }
-
-    /// Returns a mutable slice containing all transformations in the stack.
-    pub fn as_mut_slice(&mut self) -> &mut [Transformation] {
-        &mut self.data[..self.len]
-    }
-
-    /// Appends a slice of transformations to the stack.
-    pub fn extend_from_slice(&mut self, other: &[Transformation]) {
-        let to_copy = other.len().min(MAX_ACTIVE_TRANS - self.len);
-        if to_copy > 0 {
-            self.data[self.len..self.len + to_copy].copy_from_slice(&other[..to_copy]);
-            self.len += to_copy;
-        }
-    }
-
-    /// Drains transformations from a starting index into another stack.
-    pub fn drain_to(&mut self, start: usize, target: &mut TransformationStack) {
-        target.clear();
-        if start < self.len {
-            target.extend_from_slice(&self.data[start..self.len]);
-            self.len = start;
-        }
-    }
-}
-
-#[inline]
-fn uoh_tail_match(s: &str) -> bool {
-    ["uơ", "ưo"].iter().any(|pat| {
-        s.find(pat).is_some_and(|idx| {
-            s[idx + pat.len()..].chars().next().is_some_and(|c| c.is_alphabetic())
-        })
-    })
-}
-
-/// Precomputed, partitioned rules and lookup tables for fast key evaluation.
-#[derive(Clone, Debug)]
-pub struct EngineRules {
-    pub(crate) all_rules: Arc<[Rule]>,
-    pub(crate) ascii_rule_indices: [(u16, u16); 128],
-    pub(crate) non_ascii_rule_indices: Arc<[(char, (u16, u16))]>,
-    pub(crate) ascii_effect_keys: [bool; 128],
-    pub(crate) non_ascii_effect_keys: Arc<[char]>,
-}
-
-impl EngineRules {
-    /// Constructs partitioned engine rules from an [`InputMethod`].
-    pub fn from_input_method(im: &InputMethod) -> Self {
-        let mut ascii_counts = [0u16; 128];
-        let mut non_ascii_keys: Vec<char> = Vec::new();
-
-        for rule in &im.rules {
-            let key = lower(rule.key);
-            if (key as u32) < 128 {
-                ascii_counts[key as usize] += 1;
-            } else if !non_ascii_keys.contains(&key) {
-                non_ascii_keys.push(key);
-            }
-        }
-
-        let mut all_rules = vec![Rule::default(); im.rules.len()];
-        let mut ascii_rule_indices = [(0u16, 0u16); 128];
-        let mut ascii_write_pos = [0u16; 128];
-        let mut offset = 0u16;
-
-        for (ascii_char, &count) in ascii_counts.iter().enumerate() {
-            if count > 0 {
-                ascii_rule_indices[ascii_char] = (offset, offset + count);
-                ascii_write_pos[ascii_char] = offset;
-                offset += count;
-            }
-        }
-
-        let mut non_ascii_indices = Vec::with_capacity(non_ascii_keys.len());
-        let mut non_ascii_write_pos = Vec::with_capacity(non_ascii_keys.len());
-        for &k in &non_ascii_keys {
-            let count = im.rules.iter().filter(|r| lower(r.key) == k).count() as u16;
-            non_ascii_indices.push((k, (offset, offset + count)));
-            non_ascii_write_pos.push(offset);
-            offset += count;
-        }
-
-        for rule in &im.rules {
-            let key = lower(rule.key);
-            if (key as u32) < 128 {
-                let pos = ascii_write_pos[key as usize] as usize;
-                all_rules[pos] = *rule;
-                ascii_write_pos[key as usize] += 1;
-            } else if let Some(idx) = non_ascii_keys.iter().position(|&k| k == key) {
-                let pos = non_ascii_write_pos[idx] as usize;
-                all_rules[pos] = *rule;
-                non_ascii_write_pos[idx] += 1;
-            }
-        }
-
-        let mut ascii_effect_keys = [false; 128];
-        let mut non_ascii_effect_keys: Vec<char> = Vec::new();
-        for key in &im.keys {
-            if key.is_ascii() {
-                ascii_effect_keys[*key as usize] = true;
-            } else {
-                non_ascii_effect_keys.push(*key);
-            }
-        }
-        non_ascii_effect_keys.sort_unstable();
-        non_ascii_effect_keys.dedup();
-
-        Self {
-            all_rules: all_rules.into(),
-            ascii_rule_indices,
-            non_ascii_rule_indices: non_ascii_indices.into(),
-            ascii_effect_keys,
-            non_ascii_effect_keys: non_ascii_effect_keys.into(),
-        }
-    }
-}
+pub use rules::EngineRules;
+use snapshot::Snapshot;
+use state::uoh_tail_match;
+pub use state::{MAX_ACTIVE_TRANS, RestoreMark, Transformation, TransformationStack};
 
 /// The main stateful processor of the Vietnamese Input Method Engine.
 ///
@@ -343,13 +33,13 @@ pub struct Engine {
     active_buffer: [Transformation; MAX_ACTIVE_TRANS],
     active_len: usize,
 
-    input_method: Arc<InputMethod>,
-    rules: Arc<EngineRules>,
+    pub(crate) input_method: Arc<InputMethod>,
+    pub(crate) rules: Arc<EngineRules>,
     config: Config,
 
     /// Stack buffers to avoid per-keystroke heap allocations.
-    work_comp: TransformationStack,
-    scratch_comp: TransformationStack,
+    pub(crate) work_comp: TransformationStack,
+    pub(crate) scratch_comp: TransformationStack,
 
     prev_preedit: String,
     delta_buf: String,
@@ -362,7 +52,7 @@ pub struct Engine {
     snapshot_len: usize,
 
     /// Lazily-initialized scratch engine for `restore_last_word` to avoid repeated `with_config`.
-    scratch_engine: Option<Box<Engine>>,
+    pub(crate) scratch_engine: Option<Box<Engine>>,
     english_bypass: bool,
 }
 
@@ -433,7 +123,7 @@ impl Engine {
         &self.active_buffer[..self.active_len]
     }
 
-    fn take_active_into(&mut self, out: &mut TransformationStack) {
+    pub(crate) fn take_active_into(&mut self, out: &mut TransformationStack) {
         out.clear();
         out.extend_from_slice(self.active_slice());
         self.active_len = 0;
@@ -451,7 +141,7 @@ impl Engine {
         }
     }
 
-    fn set_active_from_stack(&mut self, src: &mut TransformationStack) {
+    pub(crate) fn set_active_from_stack(&mut self, src: &mut TransformationStack) {
         self.active_len = src.len().min(MAX_ACTIVE_TRANS);
         self.active_buffer[..self.active_len].copy_from_slice(src.as_slice());
         src.clear();
@@ -1082,62 +772,6 @@ impl Engine {
         input_is_full_complete: bool,
     ) -> bool {
         crate::syllable::is_valid(composition, input_is_full_complete)
-    }
-
-    /// Restores the last word in the composition to its un-transformed state.
-    ///
-    /// If `to_vietnamese` is true, it attempts to re-apply Vietnamese transformations.
-    pub fn restore_last_word(&mut self, to_vietnamese: bool) {
-        let mut work = self.work_comp;
-
-        self.take_active_into(&mut work);
-        if work.is_empty() {
-            self.set_active_from_stack(&mut work);
-            self.current_state_id = 0;
-            return;
-        }
-
-        let (prev_slice, last) =
-            crate::syllable::extract_last_word(work.as_slice(), Some(&self.input_method.keys));
-
-        let mut previous = TransformationStack::new();
-        previous.extend_from_slice(prev_slice);
-
-        if last.is_empty() {
-            self.set_active_from_stack(&mut work);
-            self.current_state_id = 0;
-            return;
-        }
-        if !to_vietnamese {
-            previous.extend_from_slice(&crate::syllable::break_composition_slice(last));
-            self.set_active_from_stack(&mut previous);
-            self.current_state_id = 0;
-            return;
-        }
-
-        let mut new_comp = TransformationStack::new();
-        if self.scratch_engine.is_none() {
-            self.scratch_engine = Some(Box::new(Self::with_shared_rules(
-                Arc::clone(&self.input_method),
-                Arc::clone(&self.rules),
-                self.config,
-            )));
-        }
-        let temp_engine = self.scratch_engine.as_mut().unwrap();
-        temp_engine.reset();
-
-        for t in last {
-            if t.key == '\0' {
-                continue;
-            }
-            temp_engine.process_key(t.key, Mode::Vietnamese);
-        }
-        new_comp.extend_from_slice(temp_engine.active_slice());
-
-        previous.extend_from_slice(new_comp.as_slice());
-
-        self.set_active_from_stack(&mut previous);
-        self.current_state_id = 0;
     }
 
     /// Removes the last character from the active composition.

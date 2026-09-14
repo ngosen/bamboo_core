@@ -122,8 +122,8 @@ mod engine;
 mod input_method;
 mod mode;
 mod orthography;
-pub(crate) use orthography::{phonetics, spelling, syllable};
 pub(crate) use dfa::flattener;
+pub(crate) use orthography::{phonetics, spelling, syllable};
 
 pub mod ffi;
 pub mod wasm;
