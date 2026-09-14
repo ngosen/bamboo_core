@@ -174,7 +174,7 @@ graph TD
 | **Phase 1: Quick Wins & CI Fixes** | - Thêm `test = false` cho `[[bench]]` trong `Cargo.toml`<br>- Loại bỏ `unsafe` thừa trong `flattener.rs` và `dfa.rs`<br>- Bật lại linter an toàn cho `ffi.rs` | 🟢 Rất Cao (Tăng tốc test, code an toàn) | 🟢 Không (Hoàn toàn tương thích ngược) |
 | **Phase 2: Architecture & Clean Code** | - Đổi tên `utils.rs` $\rightarrow$ `phonetics.rs` và `bamboo_util.rs` $\rightarrow$ `syllable.rs`<br>- Thay thế `flags: u32` bằng `Config`<br>- Thêm enum `Charset` và `InputMethodPreset` | 🟡 Cao (Dễ bảo trì, type-safe) | 🟢 Không (Giữ lại type alias nếu cần) |
 | **Phase 3: Memory Layout & Zero-Alloc Output** | - Tối ưu `Transformation` (compact struct)<br>- Giảm kích thước `Snapshot` & `Engine`<br>- Thêm `output_str()` / buffer caching cho 0-alloc hotpath | 🔴 Cực Cao (Giảm 50% RAM stack, tăng cache hits) | 🟡 Thấp (Chỉ thay đổi nội bộ engine) |
-| **Phase 4: Shared Rules & Property Tests** | - Dùng `LazyLock` cho bảng luật bộ gõ tĩnh<br>- Viết test suite `proptest` cho bộ gõ Telex / VNI | 🟡 Cao (Tăng độ tin cậy, cold-start siêu nhanh) | 🟢 Không |
+| **Phase 4: Shared Rules & Property Tests** | - Dùng `LazyLock` cho bảng luật bộ gõ tĩnh<br>- Khởi tạo rule bằng Two-Pass Counting Sort 0-alloc<br>- Thêm `InputMethodPreset` enum chuẩn Rusty 2026<br>- Viết test suite `proptest` fuzzing toàn diện | 🟡 Cao (Tăng độ tin cậy, cold-start siêu nhanh, 0 alloc thừa) | 🟢 Không (100% Hoàn thành) |
 
 ---
 
