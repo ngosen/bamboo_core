@@ -59,18 +59,19 @@
 //!
 //! Bamboo Core distinguishes two types of backspace actions:
 //!
-//! 1. **Canvas Backspace ([`Engine::remove_last_char`])**:\n//!    Undoes the single most recent keystroke transformation, reverting diacritic additions in reverse order.
+//! 1. **Canvas Backspace ([`Engine::remove_last_char`])**:
+//!    Undoes the single most recent keystroke transformation, reverting diacritic additions in reverse order.
 //!
 //!    ```rust
 //!    use bamboo_core::{Engine, Mode, InputMethod};
 //!
 //!    let mut engine = Engine::new(InputMethod::telex());
-//!    engine.process_str("chuyenr", Mode::Vietnamese);
-//!    assert_eq!(engine.output(), "chuyển");
+//!    engine.process_str("tieengs", Mode::Vietnamese);
+//!    assert_eq!(engine.output(), "tiếng");
 //!
-//!    // Drops the tone mark 'r', leaving the circumflex on 'ê'
+//!    // Drops the tone mark 's', leaving the circumflex on 'ê'
 //!    engine.remove_last_char(true);
-//!    assert_eq!(engine.output(), "chuyên");
+//!    assert_eq!(engine.output(), "tiêng");
 //!    ```
 //!
 //! 2. **Grapheme Deletion ([`Engine::remove_last_output_char`])**:

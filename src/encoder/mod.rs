@@ -167,18 +167,21 @@ pub fn encode_charset<'a>(charset: Charset, input: &'a str) -> Cow<'a, str> {
 
 /// Encodes a Vietnamese Unicode string into a specific character set by string name.
 ///
-/// If `charset_name` is `\"Unicode\"` or the input is empty, returns a clone of `input`.\n/// Unrecognized characters or unknown charset names pass through unchanged.
+/// If `charset_name` is `"Unicode"` or the input is empty, returns a clone of `input`.
+/// Unrecognized characters or unknown charset names pass through unchanged.
 ///
 /// For zero allocations, prefer [`encode_charset`] with the typed [`Charset`] enum.
 ///
 /// # Arguments
-/// * `charset_name` - Name of the target character set (e.g., `\"TCVN3 (ABC)\"`, `\"VNI Windows\"`, `\"VIQR\"`).
+/// * `charset_name` - Name of the target character set (e.g., `"TCVN3 (ABC)"`, `"VNI Windows"`, `"VIQR"`).
 /// * `input` - The source Unicode string.
 ///
 /// # Example
 /// ```rust
-/// use bamboo_core::advanced::encode;\n///\n/// let viqr = encode(\"VIQR\", \"tiếng Việt\");
-/// assert_eq!(viqr, \"tie^'ng Vie^.t\");
+/// use bamboo_core::advanced::encode;
+///
+/// let viqr = encode("VIQR", "tiếng Việt");
+/// assert_eq!(viqr, "tie^'ng Vie^.t");
 /// ```
 pub fn encode(charset_name: &str, input: &str) -> String {
     if charset_name == UNICODE || input.is_empty() {
@@ -211,9 +214,9 @@ pub fn encode(charset_name: &str, input: &str) -> String {
 /// use bamboo_core::advanced::charset_names;
 ///
 /// let names: Vec<&'static str> = charset_names().collect();
-/// assert!(names.contains(&\"Unicode\"));
-/// assert!(names.contains(&\"TCVN3 (ABC)\"));
-/// assert!(names.contains(&\"VIQR\"));
+/// assert!(names.contains(&"Unicode"));
+/// assert!(names.contains(&"TCVN3 (ABC)"));
+/// assert!(names.contains(&"VIQR"));
 /// ```
 pub fn charset_names() -> impl Iterator<Item = &'static str> {
     std::iter::once(UNICODE).chain(get_charset_definitions().keys().copied())
