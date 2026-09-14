@@ -3,7 +3,7 @@
 use std::borrow::Cow;
 
 use crate::config::Config;
-use crate::input_method::{EffectType, InputMethod, Mark, Rule};
+use crate::input_method::{EffectType, InputMethod, Mark, Rule, Tone};
 use crate::mode::{Mode, OutputOptions};
 use crate::phonetics::{is_upper, lower};
 
@@ -41,20 +41,129 @@ struct Snapshot {
     english_bypass: bool,
 }
 
+/// Sentinel value representing `None` for a transformation target index.
+pub const TARGET_NONE: u8 = 0xFF;
+
 /// Represents a single keypress or a transformation derived from it (e.g., adding a mark or tone).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Hash)]
+///
+/// Compacted to exactly 16 bytes (128-bit aligned) for optimal CPU cache utilization and zero heap waste.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Transformation {
-    /// The rule that was applied to create this transformation.
-    pub rule: Rule,
-    /// The index of the transformation in the composition that this transformation targets (if any).
-    /// For example, a tone mark transformation targets an earlier vowel.
-    /// Uses u8 since `MAX_ACTIVE_TRANS` = 16, saving 14 bytes vs `Option<usize>`.
-    pub target: Option<u8>,
-    /// Whether the resulting character should be rendered as uppercase.
+    /// The key that triggered this transformation (or `\0` if synthetic/virtual).
+    pub key: char,
+    /// The character that this transformation targets / replaces.
+    pub effect_on: char,
+    /// The resulting character after transformation.
+    pub result: char,
+    /// The index of the targeted transformation in the composition (`0xFF` = None).
+    target_idx: u8,
+    /// Transformation effect value (Tone or Mark enum value).
+    pub effect: u8,
+    /// Type of transformation (Appending, Mark, Tone, Replacing).
+    pub effect_type: EffectType,
+    /// Whether the resulting character should be rendered uppercase.
     pub is_upper_case: bool,
 }
 
-const _: () = assert!(std::mem::size_of::<Transformation>() <= 28);
+const _: () = assert!(std::mem::size_of::<Transformation>() == 16);
+
+impl Default for Transformation {
+    #[inline]
+    fn default() -> Self {
+        Self {
+            key: '\0',
+            effect_on: '\0',
+            result: '\0',
+            target_idx: TARGET_NONE,
+            effect: 0,
+            effect_type: EffectType::Appending,
+            is_upper_case: false,
+        }
+    }
+}
+
+impl Transformation {
+    /// Creates a new transformation from explicit fields.
+    #[inline]
+    pub const fn new(
+        key: char,
+        effect_on: char,
+        result: char,
+        target: Option<u8>,
+        effect: u8,
+        effect_type: EffectType,
+        is_upper_case: bool,
+    ) -> Self {
+        let target_idx = match target {
+            Some(idx) => idx,
+            None => TARGET_NONE,
+        };
+        Self {
+            key,
+            effect_on,
+            result,
+            target_idx,
+            effect,
+            effect_type,
+            is_upper_case,
+        }
+    }
+
+    /// Creates a new transformation from a [`Rule`].
+    #[inline]
+    pub const fn from_rule(rule: Rule, target: Option<u8>, is_upper_case: bool) -> Self {
+        Self::new(
+            rule.key,
+            rule.effect_on,
+            rule.result,
+            target,
+            rule.effect,
+            rule.effect_type,
+            is_upper_case,
+        )
+    }
+
+    /// Returns the target transformation index, if any.
+    #[inline]
+    pub const fn target(&self) -> Option<u8> {
+        if self.target_idx == TARGET_NONE {
+            None
+        } else {
+            Some(self.target_idx)
+        }
+    }
+
+    /// Returns the raw target index (`0xFF` for None).
+    #[inline]
+    pub const fn target_raw(&self) -> u8 {
+        self.target_idx
+    }
+
+    /// Sets or clears the target transformation index.
+    #[inline]
+    pub fn set_target(&mut self, target: Option<u8>) {
+        self.target_idx = target.unwrap_or(TARGET_NONE);
+    }
+
+    /// Returns true if this transformation has a target.
+    #[inline]
+    pub const fn has_target(&self) -> bool {
+        self.target_idx != TARGET_NONE
+    }
+
+    /// Retrieves the effect value as a [`Tone`].
+    #[inline]
+    pub const fn tone(&self) -> Tone {
+        match self.effect {
+            1 => Tone::Grave,
+            2 => Tone::Acute,
+            3 => Tone::Hook,
+            4 => Tone::Tilde,
+            5 => Tone::Dot,
+            _ => Tone::None,
+        }
+    }
+}
 
 /// A stack-allocated buffer for transformations to avoid heap allocations in the hot path.
 ///
@@ -444,11 +553,7 @@ impl Engine {
                         );
                         if let (Some(target), Some(mut rule)) = (target, rule) {
                             rule.key = '\0';
-                            trans_buf.push(Transformation {
-                                rule,
-                                target: Some(target),
-                                is_upper_case: false,
-                            });
+                            trans_buf.push(Transformation::from_rule(rule, Some(target), false));
                         }
                     }
                 }
@@ -456,10 +561,10 @@ impl Engine {
         }
 
         let has_undo = trans_buf.as_slice().iter().any(|t| {
-            t.target.is_some()
-                && ((t.rule.effect_type == EffectType::ToneTransformation && t.rule.effect == 0)
-                    || (t.rule.effect_type == EffectType::MarkTransformation
-                        && (t.rule.effect == 0 || t.rule.effect == Mark::Raw as u8)))
+            t.has_target()
+                && ((t.effect_type == EffectType::ToneTransformation && t.effect == 0)
+                    || (t.effect_type == EffectType::MarkTransformation
+                        && (t.effect == 0 || t.effect == Mark::Raw as u8)))
         });
 
         composition.extend_from_slice(trans_buf.as_slice());
@@ -481,8 +586,8 @@ impl Engine {
 
         while idx > 0 {
             let tmp = &composition[idx - 1];
-            if tmp.target.is_none() {
-                let is_v = crate::phonetics::is_vowel(tmp.rule.result);
+            if !tmp.has_target() {
+                let is_v = crate::phonetics::is_vowel(tmp.result);
                 if is_v {
                     if found_vowel && onset_count > 0 {
                         break;
@@ -515,8 +620,8 @@ impl Engine {
         let offset = syllable_abs_start;
         if offset != 0 {
             for t in scratch.as_mut_slice().iter_mut() {
-                if let Some(target) = t.target {
-                    t.target = Some(target.saturating_sub(offset as u8));
+                if let Some(target) = t.target() {
+                    t.set_target(Some(target.saturating_sub(offset as u8)));
                 }
             }
         }
@@ -525,8 +630,8 @@ impl Engine {
 
         if offset != 0 {
             for t in scratch.as_mut_slice().iter_mut() {
-                if let Some(target) = t.target {
-                    t.target = Some(target + offset as u8);
+                if let Some(target) = t.target() {
+                    t.set_target(Some(target + offset as u8));
                 }
             }
         }
@@ -793,8 +898,8 @@ impl Engine {
             self.english_bypass = true;
             // P5 tone strip: remove all tone marks when bypass is triggered by undo
             for t in work.as_mut_slice() {
-                if t.rule.effect_type == EffectType::ToneTransformation {
-                    t.rule.effect = 0;
+                if t.effect_type == EffectType::ToneTransformation {
+                    t.effect = 0;
                 }
             }
         }
@@ -804,14 +909,14 @@ impl Engine {
             let has_transforms = work
                 .as_slice()
                 .iter()
-                .any(|t| t.target.is_some() || (t.rule.key != '\0' && t.rule.result != t.rule.key));
+                .any(|t| t.has_target() || (t.key != '\0' && t.result != t.key));
 
             if has_transforms && !self.is_valid_internal(work.as_slice(), false) {
                 let raw_comp = crate::syllable::break_composition_slice(work.as_slice());
                 let raw_len = work
                     .as_slice()
                     .iter()
-                    .filter(|t| t.rule.key != '\0')
+                    .filter(|t| t.key != '\0')
                     .count()
                     .min(MAX_ACTIVE_TRANS);
                 work.clear();
@@ -986,10 +1091,10 @@ impl Engine {
         temp_engine.reset();
 
         for t in last {
-            if t.rule.key == '\0' {
+            if t.key == '\0' {
                 continue;
             }
-            temp_engine.process_key(t.rule.key, Mode::Vietnamese);
+            temp_engine.process_key(t.key, Mode::Vietnamese);
         }
         new_comp.extend_from_slice(temp_engine.active_slice());
 
@@ -1028,7 +1133,7 @@ impl Engine {
             .iter()
             .enumerate()
             .rev()
-            .find(|(_, t)| t.rule.effect_type == EffectType::Appending && t.rule.key != '\0');
+            .find(|(_, t)| t.effect_type == EffectType::Appending && t.key != '\0');
         let Some((l, _)) = last else { return };
 
         // Compact the buffer, dropping the grapheme at `l` together with every
@@ -1037,7 +1142,7 @@ impl Engine {
         let mut write = 0;
         for read in 0..self.active_len {
             let t = self.active_buffer[read];
-            if read == l || t.target == Some(l as u8) {
+            if read == l || t.target() == Some(l as u8) {
                 continue;
             }
             if write != read {

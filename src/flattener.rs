@@ -38,11 +38,11 @@ pub(crate) fn append_flatten_slice(
 #[inline]
 fn estimate_cap_bytes_slice(composition: &[Transformation], options: OutputOptions) -> usize {
     let char_count = if options.contains(OutputOptions::RAW) {
-        composition.iter().filter(|t| t.rule.key != '\0').count()
+        composition.iter().filter(|t| t.key != '\0').count()
     } else {
         composition
             .iter()
-            .filter(|t| t.rule.effect_type == EffectType::Appending && t.rule.key != '\0')
+            .filter(|t| t.effect_type == EffectType::Appending && t.key != '\0')
             .count()
     };
     char_count * 4
@@ -66,14 +66,14 @@ fn write_canvas_slice(composition: &[Transformation], options: OutputOptions, ou
     let mut appending_len = 0usize;
 
     for (idx, trans) in composition.iter().enumerate() {
-        if (options.contains(OutputOptions::RAW) || trans.rule.effect_type == EffectType::Appending)
-            && trans.rule.key != '\0'
+        if (options.contains(OutputOptions::RAW) || trans.effect_type == EffectType::Appending)
+            && trans.key != '\0'
         {
             if appending_len < MAX_ACTIVE_TRANS {
                 appending_idxs[appending_len] = idx as u8;
                 appending_len += 1;
             }
-        } else if let Some(target) = trans.target
+        } else if let Some(target) = trans.target()
             && (target as usize) < len
         {
             next_effect[idx] = head_effect[target as usize];
@@ -87,9 +87,9 @@ fn write_canvas_slice(composition: &[Transformation], options: OutputOptions, ou
 
         let mut chr: char;
         if options.contains(OutputOptions::RAW) {
-            chr = appending_trans.rule.key;
+            chr = appending_trans.key;
         } else {
-            chr = appending_trans.rule.effect_on;
+            chr = appending_trans.effect_on;
 
             let mut curr = head_effect[abs_idx];
             let mut effects = [0u8; MAX_ACTIVE_TRANS];
@@ -110,16 +110,16 @@ fn write_canvas_slice(composition: &[Transformation], options: OutputOptions, ou
             for &eff_idx in effects[..count].iter().rev() {
                 let t = &composition[eff_idx as usize];
 
-                match t.rule.effect_type {
+                match t.effect_type {
                     EffectType::MarkTransformation => {
-                        if t.rule.effect == Mark::Raw as u8 {
-                            chr = appending_trans.rule.key;
+                        if t.effect == Mark::Raw as u8 {
+                            chr = appending_trans.key;
                         } else {
-                            chr = add_mark_to_char(chr, t.rule.effect);
+                            chr = add_mark_to_char(chr, t.effect);
                         }
                     }
                     EffectType::ToneTransformation => {
-                        chr = add_tone_to_char(chr, t.rule.effect);
+                        chr = add_tone_to_char(chr, t.effect);
                     }
                     _ => {}
                 }
@@ -153,13 +153,13 @@ pub(crate) fn first_canvas_char_in_suffix(
     for (idx, trans) in composition[start..].iter().enumerate() {
         let abs_idx = start + idx;
         if options.contains(OutputOptions::RAW) {
-            if trans.rule.key == '\0' {
+            if trans.key == '\0' {
                 continue;
             }
             first = Some((abs_idx, trans));
             break;
         }
-        if trans.rule.effect_type == EffectType::Appending && trans.rule.key != '\0' {
+        if trans.effect_type == EffectType::Appending && trans.key != '\0' {
             first = Some((abs_idx, trans));
             break;
         }
@@ -167,23 +167,23 @@ pub(crate) fn first_canvas_char_in_suffix(
 
     let (target_abs_idx, appending_trans) = first?;
     let mut chr = if options.contains(OutputOptions::RAW) {
-        appending_trans.rule.key
+        appending_trans.key
     } else {
-        let mut c = appending_trans.rule.effect_on;
+        let mut c = appending_trans.effect_on;
         for trans in &composition[start..] {
-            if trans.target != Some(target_abs_idx as u8) {
+            if trans.target() != Some(target_abs_idx as u8) {
                 continue;
             }
-            match trans.rule.effect_type {
+            match trans.effect_type {
                 EffectType::MarkTransformation => {
-                    if trans.rule.effect == Mark::Raw as u8 {
-                        c = appending_trans.rule.key;
+                    if trans.effect == Mark::Raw as u8 {
+                        c = appending_trans.key;
                     } else {
-                        c = add_mark_to_char(c, trans.rule.effect);
+                        c = add_mark_to_char(c, trans.effect);
                     }
                 }
                 EffectType::ToneTransformation => {
-                    c = add_tone_to_char(c, trans.rule.effect);
+                    c = add_tone_to_char(c, trans.effect);
                 }
                 _ => {}
             }
@@ -209,49 +209,13 @@ pub(crate) fn first_canvas_char_in_suffix(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::input_method::{EffectType, Rule};
+    use crate::input_method::EffectType;
 
     #[test]
     fn first_canvas_char_in_suffix_handles_offsets() {
-        let t1 = Transformation {
-            rule: Rule {
-                key: 'a',
-                effect: 0,
-                effect_type: EffectType::Appending,
-                effect_on: 'a',
-                result: 'a',
-                appended: ['\0'; 2],
-                appended_len: 0,
-            },
-            target: None,
-            is_upper_case: false,
-        };
-        let t2 = Transformation {
-            rule: Rule {
-                key: ' ',
-                effect: 0,
-                effect_type: EffectType::Appending,
-                effect_on: ' ',
-                result: ' ',
-                appended: ['\0'; 2],
-                appended_len: 0,
-            },
-            target: None,
-            is_upper_case: false,
-        };
-        let t3 = Transformation {
-            rule: Rule {
-                key: 'w',
-                effect: 0,
-                effect_type: EffectType::Appending,
-                effect_on: 'w',
-                result: 'w',
-                appended: ['\0'; 2],
-                appended_len: 0,
-            },
-            target: None,
-            is_upper_case: false,
-        };
+        let t1 = Transformation::new('a', 'a', 'a', None, 0, EffectType::Appending, false);
+        let t2 = Transformation::new(' ', ' ', ' ', None, 0, EffectType::Appending, false);
+        let t3 = Transformation::new('w', 'w', 'w', None, 0, EffectType::Appending, false);
         let comp = vec![t1, t2, t3];
         assert_eq!(first_canvas_char_in_suffix(&comp, 1, OutputOptions::RAW), Some(' '));
         assert_eq!(first_canvas_char_in_suffix(&comp, 2, OutputOptions::NONE), Some('w'));
@@ -259,90 +223,21 @@ mod tests {
 
     #[test]
     fn first_canvas_char_in_suffix_resolves_absolute_targets() {
-        let x = Transformation {
-            rule: Rule {
-                key: 'x',
-                effect: 0,
-                effect_type: EffectType::Appending,
-                effect_on: 'x',
-                result: 'x',
-                appended: ['\0'; 2],
-                appended_len: 0,
-            },
-            target: None,
-            is_upper_case: false,
-        };
-        let o = Transformation {
-            rule: Rule {
-                key: 'o',
-                effect: 0,
-                effect_type: EffectType::Appending,
-                effect_on: 'o',
-                result: 'o',
-                appended: ['\0'; 2],
-                appended_len: 0,
-            },
-            target: None,
-            is_upper_case: false,
-        };
-        let mark_hat = Transformation {
-            rule: Rule {
-                key: 'o',
-                effect: 1, // Mark::Hat
-                effect_type: EffectType::MarkTransformation,
-                effect_on: 'o',
-                result: 'ô',
-                appended: ['\0'; 2],
-                appended_len: 0,
-            },
-            target: Some(1),
-            is_upper_case: false,
-        };
+        let x = Transformation::new('x', 'x', 'x', None, 0, EffectType::Appending, false);
+        let o = Transformation::new('o', 'o', 'o', None, 0, EffectType::Appending, false);
+        let mark_hat =
+            Transformation::new('o', 'o', 'ô', Some(1), 1, EffectType::MarkTransformation, false);
         let comp = vec![x, o, mark_hat];
         assert_eq!(first_canvas_char_in_suffix(&comp, 1, OutputOptions::NONE), Some('ô'));
     }
 
     #[test]
     fn flatten_applies_mark_and_tone_in_order() {
-        let o = Transformation {
-            rule: Rule {
-                key: 'o',
-                effect: 0,
-                effect_type: EffectType::Appending,
-                effect_on: 'o',
-                result: 'o',
-                appended: ['\0'; 2],
-                appended_len: 0,
-            },
-            target: None,
-            is_upper_case: false,
-        };
-        let hat = Transformation {
-            rule: Rule {
-                key: 'o',
-                effect: 1, // Mark::Hat
-                effect_type: EffectType::MarkTransformation,
-                effect_on: 'o',
-                result: 'ô',
-                appended: ['\0'; 2],
-                appended_len: 0,
-            },
-            target: Some(0),
-            is_upper_case: false,
-        };
-        let acute = Transformation {
-            rule: Rule {
-                key: 's',
-                effect: 2, // Tone::Acute
-                effect_type: EffectType::ToneTransformation,
-                effect_on: '\0',
-                result: '\0',
-                appended: ['\0'; 2],
-                appended_len: 0,
-            },
-            target: Some(0),
-            is_upper_case: false,
-        };
+        let o = Transformation::new('o', 'o', 'o', None, 0, EffectType::Appending, false);
+        let hat =
+            Transformation::new('o', 'o', 'ô', Some(0), 1, EffectType::MarkTransformation, false);
+        let acute =
+            Transformation::new('s', '\0', '\0', Some(0), 2, EffectType::ToneTransformation, false);
         let comp = vec![o, hat, acute];
         assert_eq!(flatten_slice(&comp, OutputOptions::NONE), "ố");
     }
