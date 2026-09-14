@@ -59,13 +59,14 @@ impl Default for State {
 }
 
 impl State {
-    /// Looks up a transition by key.
+    /// Performs a fast transition lookup on an ASCII key using bitset check + SWAR parallel search.
     ///
-    /// Uses the 128-bit bitset for $O(1)$ fast rejection and SWAR (SIMD-Within-A-Register)
-    /// 8-byte chunk scanning for finding matching keys without branch mispredictions.
+    /// The algorithm runs in constant time without branches for typical keys:
+    /// 1. $O(1)$ rejection via the 128-bit bitset (1 bit per ASCII code).
+    /// 2. If present, SWAR (SIMD Within A Register) compares 8 keys at once using 64-bit integers.
     ///
     /// # Arguments
-    /// * `key` - ASCII byte of the key to look up.
+    /// * `key` - The ASCII byte of the key to look up (0..127).
     ///
     /// # Returns
     /// The destination state ID (non-zero), or `0` if no transition exists.
@@ -78,12 +79,18 @@ impl State {
         }
 
         let broadcast = (key as u64) * 0x0101010101010101;
-        let k_ptr = self.trans_keys.as_ptr() as *const u64;
 
-        // Check chunk 0 (keys 0..8)
-        // SAFETY: k_ptr is valid for reading up to 24 bytes (3 chunks of 8 bytes each)
-        // and read_unaligned handles potential misalignment.
-        let c0 = unsafe { u64::from_le(std::ptr::read_unaligned(k_ptr)) };
+        // Check chunk 0 (keys 0..8) using safe byte slice loading
+        let c0 = u64::from_le_bytes([
+            self.trans_keys[0],
+            self.trans_keys[1],
+            self.trans_keys[2],
+            self.trans_keys[3],
+            self.trans_keys[4],
+            self.trans_keys[5],
+            self.trans_keys[6],
+            self.trans_keys[7],
+        ]);
         let v0 = c0 ^ broadcast;
         let m0 = v0.wrapping_sub(0x0101010101010101) & !v0 & 0x8080808080808080;
         if m0 != 0 {
@@ -95,9 +102,16 @@ impl State {
 
         // Check chunk 1 (keys 8..16)
         if self.trans_len > 8 {
-            // SAFETY: k_ptr is valid for reading up to 24 bytes (3 chunks of 8 bytes each)
-            // and read_unaligned handles potential misalignment.
-            let c1 = unsafe { u64::from_le(std::ptr::read_unaligned(k_ptr.add(1))) };
+            let c1 = u64::from_le_bytes([
+                self.trans_keys[8],
+                self.trans_keys[9],
+                self.trans_keys[10],
+                self.trans_keys[11],
+                self.trans_keys[12],
+                self.trans_keys[13],
+                self.trans_keys[14],
+                self.trans_keys[15],
+            ]);
             let v1 = c1 ^ broadcast;
             let m1 = v1.wrapping_sub(0x0101010101010101) & !v1 & 0x8080808080808080;
             if m1 != 0 {
@@ -110,9 +124,16 @@ impl State {
 
         // Check chunk 2 (keys 16..24)
         if self.trans_len > 16 {
-            // SAFETY: k_ptr is valid for reading up to 24 bytes (3 chunks of 8 bytes each)
-            // and read_unaligned handles potential misalignment.
-            let c2 = unsafe { u64::from_le(std::ptr::read_unaligned(k_ptr.add(2))) };
+            let c2 = u64::from_le_bytes([
+                self.trans_keys[16],
+                self.trans_keys[17],
+                self.trans_keys[18],
+                self.trans_keys[19],
+                self.trans_keys[20],
+                self.trans_keys[21],
+                self.trans_keys[22],
+                self.trans_keys[23],
+            ]);
             let v2 = c2 ^ broadcast;
             let m2 = v2.wrapping_sub(0x0101010101010101) & !v2 & 0x8080808080808080;
             if m2 != 0 {
@@ -315,9 +336,9 @@ impl<'a> DfaCompiler<'a> {
                         buf[pos] = b;
                         pos += 1;
                     }
-                    // SAFETY: all parts are ASCII
-                    let seq = unsafe { std::str::from_utf8_unchecked(&buf[..pos]) };
-                    self.simulate_str(seq);
+                    if let Ok(seq) = std::str::from_utf8(&buf[..pos]) {
+                        self.simulate_str(seq);
+                    }
                 }
             }
         }

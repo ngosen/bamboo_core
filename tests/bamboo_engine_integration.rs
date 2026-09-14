@@ -38,6 +38,8 @@ fn test_telex_comprehensive() {
 
     test_input(im.clone(), "dad", "đa");
     test_input(im.clone(), "reboot", "reboot");
+
+    test_input(im.clone(), "dowwnloads", "downloads");
 }
 
 #[test]

@@ -47,18 +47,6 @@ fn estimate_cap_bytes_slice(composition: &[Transformation], options: OutputOptio
     char_count * 4
 }
 
-#[inline(always)]
-fn push_char_fast(out: &mut String, c: char) {
-    if c.is_ascii() {
-        // SAFETY: c is validated ASCII (0..127), which is guaranteed valid single-byte UTF-8.
-        unsafe {
-            out.as_mut_vec().push(c as u8);
-        }
-    } else {
-        out.push(c);
-    }
-}
-
 fn write_canvas_slice(composition: &[Transformation], options: OutputOptions, out: &mut String) {
     if composition.is_empty() {
         return;
@@ -151,7 +139,7 @@ fn write_canvas_slice(composition: &[Transformation], options: OutputOptions, ou
         } else {
             chr
         };
-        push_char_fast(out, final_chr);
+        out.push(final_chr);
     }
 }
 

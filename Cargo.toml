@@ -41,22 +41,27 @@ wasm = ["wasm-bindgen"]
 [[bench]]
 name = "engine_bench"
 harness = false
+test = false
 
 [[bench]]
 name = "telex_benchmark"
 harness = false
+test = false
 
 [[bench]]
 name = "memory_profile"
 harness = false
+test = false
 
 [[bench]]
 name = "dfa_misspell_test"
 harness = false
+test = false
 
 [[bench]]
 name = "vi_bench"
 harness = false
+test = false
 
 [dev-dependencies]
 skey-engine = "0.1.4"
