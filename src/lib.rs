@@ -122,9 +122,8 @@ mod engine;
 mod flattener;
 mod input_method;
 mod mode;
-mod phonetics;
-mod spelling;
-mod syllable;
+mod orthography;
+pub(crate) use orthography::{phonetics, spelling, syllable};
 
 pub mod ffi;
 pub mod wasm;
@@ -163,11 +162,11 @@ pub mod parallel {
 }
 
 pub use config::{Config, ConfigBuilder};
-pub use encoder::{Charset, encode_charset};
 pub(crate) use encoder::tables as charset_def;
+pub use encoder::{Charset, encode_charset};
 pub use engine::{Engine, EngineRules, RestoreMark, Transformation, TransformationStack};
-pub use input_method::{InputMethod, InputMethodPreset};
 pub(crate) use input_method::definitions as input_method_def;
+pub use input_method::{InputMethod, InputMethodPreset};
 pub use mode::{Mode, OutputOptions};
 
 /// Advanced types for low-level interaction with the engine.
