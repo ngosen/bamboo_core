@@ -21,7 +21,7 @@ A high-performance Vietnamese input method engine (IME) core written in Rust, po
 
 ```toml
 [dependencies]
-bamboo-core = "0.3.23"
+bamboo-core = "0.3.24"
 ```
 
 ## Quick Start — IME Integration
@@ -170,12 +170,14 @@ Bamboo Core is architected for zero heap allocations in the interactive typing l
 
 ## Architecture
 
-- **`Engine`**: Core state machine managing character buffer, keystroke history snapshots, and output formatting.
-- **`Dfa`**: JIT cache with Arena Allocation, 128-bit bitset fast rejection, and SWAR 8-byte chunk scanning for $O(1)$ state transitions.
-- **`InputMethod`**: Transformation rules for Telex, VNI, VIQR, and Microsoft layout with multi-character expansions.
-- **`Config`**: Runtime toggles for free tone placement, modern/traditional tone style, and auto-correct.
-- **`encoder`**: Zero-allocation encoding conversion supporting 16 Vietnamese legacy charsets (TCVN3, VNI-Windows, VIQR, VISCII, etc.).
-- **`ffi`**: C-ABI bindings for integration with C, C++, Python, Fcitx5, IBus, and native GUI toolkits.
+The codebase follows a modular domain-driven architecture designed for zero allocations and extreme CPU cache locality:
+
+- **`engine` (`src/engine/`)**: Core state machine managing active syllable compositions (`TransformationStack`), Counting Sort pre-partitioned rule index tables (`EngineRules`), $O(1)$ keystroke rollback snapshots (`Snapshot`), and word restoration.
+- **`input_method` (`src/input_method/`)**: Input method definitions (Telex, VNI, VIQR, Microsoft layout) with zero-copy rule sharing across instances via `Arc<EngineRules>` and `Arc<InputMethod>`.
+- **`orthography` (`src/orthography/`)**: Vietnamese orthography domain covering character phonetics, diacritic and tone tables, $O(1)$ bitmask syllable validation (`spelling`), and CVC syllable boundary extraction.
+- **`dfa` (`src/dfa/`)**: JIT cache with flat arena storage, 128-bit bitset fast rejection, SWAR 8-byte chunk scanning for state transitions, and canvas flattener.
+- **`encoder` (`src/encoder/`)**: Zero-allocation legacy encoding conversion supporting 16 Vietnamese character sets (TCVN3, VNI-Windows, VIQR, VISCII, VPS, etc.).
+- **`ffi` (`src/ffi.rs`) & `wasm` (`src/wasm.rs`)**: Safe C-ABI bindings with `#![deny(unsafe_op_in_unsafe_fn)]` and WebAssembly wrappers.
 
 ## License
 
