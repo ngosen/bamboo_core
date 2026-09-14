@@ -1,3 +1,101 @@
+use std::sync::LazyLock;
+
+/// Standard input method presets supported natively by Bamboo.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+pub enum InputMethodPreset {
+    /// Standard Telex input method.
+    #[default]
+    Telex,
+    /// Standard VNI input method (using numeric tone/diacritic keys).
+    Vni,
+    /// Standard VIQR input method.
+    Viqr,
+    /// Microsoft Standard Vietnamese keyboard layout.
+    MicrosoftLayout,
+    /// Telex variant that also supports `[` and `]` keys for horns.
+    Telex2,
+    /// Combined Telex and VNI.
+    TelexVni,
+    /// Combined Telex, VNI, and VIQR.
+    TelexVniViqr,
+    /// VNI for French keyboard layouts.
+    VniFrenchLayout,
+    /// Telex variant using `w` for marks and `z` for tone removal.
+    TelexW,
+}
+
+impl InputMethodPreset {
+    /// Returns the canonical name of the preset.
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::Telex => "Telex",
+            Self::Vni => "VNI",
+            Self::Viqr => "VIQR",
+            Self::MicrosoftLayout => "Microsoft layout",
+            Self::Telex2 => "Telex 2",
+            Self::TelexVni => "Telex + VNI",
+            Self::TelexVniViqr => "Telex + VNI + VIQR",
+            Self::VniFrenchLayout => "VNI Bàn phím tiếng Pháp",
+            Self::TelexW => "Telex W",
+        }
+    }
+
+    /// Returns a pre-parsed [`InputMethod`] instance for this preset.
+    pub fn to_input_method(self) -> InputMethod {
+        match self {
+            Self::Telex => PRESET_TELEX.clone(),
+            Self::Vni => PRESET_VNI.clone(),
+            Self::Viqr => PRESET_VIQR.clone(),
+            Self::MicrosoftLayout => PRESET_MICROSOFT.clone(),
+            Self::Telex2 => PRESET_TELEX_2.clone(),
+            Self::TelexVni => PRESET_TELEX_VNI.clone(),
+            Self::TelexVniViqr => PRESET_TELEX_VNI_VIQR.clone(),
+            Self::VniFrenchLayout => PRESET_VNI_FRENCH.clone(),
+            Self::TelexW => PRESET_TELEX_W.clone(),
+        }
+    }
+}
+
+impl std::fmt::Display for InputMethodPreset {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name())
+    }
+}
+
+impl std::str::FromStr for InputMethodPreset {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "telex" => Ok(Self::Telex),
+            "vni" => Ok(Self::Vni),
+            "viqr" => Ok(Self::Viqr),
+            "microsoft" | "microsoft layout" | "microsoft_layout" => Ok(Self::MicrosoftLayout),
+            "telex2" | "telex 2" | "telex_2" => Ok(Self::Telex2),
+            "telex+vni" | "telex + vni" | "telex_vni" => Ok(Self::TelexVni),
+            "telex+vni+viqr" | "telex + vni + viqr" | "telex_vni_viqr" => Ok(Self::TelexVniViqr),
+            "vni french" | "vni_french" | "vni bàn phím tiếng pháp" | "vni ban phim tieng phap" => {
+                Ok(Self::VniFrenchLayout)
+            }
+            "telexw" | "telex w" | "telex_w" => Ok(Self::TelexW),
+            _ => Err(format!("Unknown input method preset: '{}'", s)),
+        }
+    }
+}
+
+static PRESET_TELEX: LazyLock<InputMethod> = LazyLock::new(|| parse_input_method("Telex"));
+static PRESET_VNI: LazyLock<InputMethod> = LazyLock::new(|| parse_input_method("VNI"));
+static PRESET_VIQR: LazyLock<InputMethod> = LazyLock::new(|| parse_input_method("VIQR"));
+static PRESET_MICROSOFT: LazyLock<InputMethod> =
+    LazyLock::new(|| parse_input_method("Microsoft layout"));
+static PRESET_TELEX_2: LazyLock<InputMethod> = LazyLock::new(|| parse_input_method("Telex 2"));
+static PRESET_TELEX_VNI: LazyLock<InputMethod> = LazyLock::new(|| parse_input_method("Telex + VNI"));
+static PRESET_TELEX_VNI_VIQR: LazyLock<InputMethod> =
+    LazyLock::new(|| parse_input_method("Telex + VNI + VIQR"));
+static PRESET_VNI_FRENCH: LazyLock<InputMethod> =
+    LazyLock::new(|| parse_input_method("VNI Bàn phím tiếng Pháp"));
+static PRESET_TELEX_W: LazyLock<InputMethod> = LazyLock::new(|| parse_input_method("Telex W"));
+
 use phf::{Map, phf_map};
 
 use crate::input_method_def::InputMethodDef;
@@ -174,49 +272,54 @@ impl InputMethod {
         &self.keys
     }
 
-    /// Standard Telex input method.
+    /// Creates an input method from a known preset.
+    pub fn from_preset(preset: InputMethodPreset) -> Self {
+        preset.to_input_method()
+    }
+
+    /// Standard Telex input method (lazily cached across calls).
     pub fn telex() -> Self {
-        parse_input_method("Telex")
+        PRESET_TELEX.clone()
     }
 
-    /// Standard VNI input method (using number keys).
+    /// Standard VNI input method (using number keys, lazily cached across calls).
     pub fn vni() -> Self {
-        parse_input_method("VNI")
+        PRESET_VNI.clone()
     }
 
-    /// Standard VIQR input method.
+    /// Standard VIQR input method (lazily cached across calls).
     pub fn viqr() -> Self {
-        parse_input_method("VIQR")
+        PRESET_VIQR.clone()
     }
 
-    /// Microsoft Standard Vietnamese keyboard layout.
+    /// Microsoft Standard Vietnamese keyboard layout (lazily cached across calls).
     pub fn microsoft_layout() -> Self {
-        parse_input_method("Microsoft layout")
+        PRESET_MICROSOFT.clone()
     }
 
-    /// Telex variant that also supports `[` and `]` keys.
+    /// Telex variant that also supports `[` and `]` keys (lazily cached across calls).
     pub fn telex_2() -> Self {
-        parse_input_method("Telex 2")
+        PRESET_TELEX_2.clone()
     }
 
-    /// Combined Telex and VNI.
+    /// Combined Telex and VNI (lazily cached across calls).
     pub fn telex_vni() -> Self {
-        parse_input_method("Telex + VNI")
+        PRESET_TELEX_VNI.clone()
     }
 
-    /// Combined Telex, VNI, and VIQR.
+    /// Combined Telex, VNI, and VIQR (lazily cached across calls).
     pub fn telex_vni_viqr() -> Self {
-        parse_input_method("Telex + VNI + VIQR")
+        PRESET_TELEX_VNI_VIQR.clone()
     }
 
-    /// VNI for French keyboard layouts.
+    /// VNI for French keyboard layouts (lazily cached across calls).
     pub fn vni_french_layout() -> Self {
-        parse_input_method("VNI Bàn phím tiếng Pháp")
+        PRESET_VNI_FRENCH.clone()
     }
 
-    /// Telex variant using `w` for marks and `z` for tone removal.
+    /// Telex variant using `w` for marks and `z` for tone removal (lazily cached across calls).
     pub fn telex_w() -> Self {
-        parse_input_method("Telex W")
+        PRESET_TELEX_W.clone()
     }
 }
 
@@ -553,4 +656,52 @@ mod tests {
         assert!(!o_rules.is_empty());
         assert!(!o_rules.iter().any(|r| r.effect_type == EffectType::Appending));
     }
+    #[test]
+    fn test_input_method_presets_roundtrip() {
+        let presets = [
+            InputMethodPreset::Telex,
+            InputMethodPreset::Vni,
+            InputMethodPreset::Viqr,
+            InputMethodPreset::MicrosoftLayout,
+            InputMethodPreset::Telex2,
+            InputMethodPreset::TelexVni,
+            InputMethodPreset::TelexVniViqr,
+            InputMethodPreset::VniFrenchLayout,
+            InputMethodPreset::TelexW,
+        ];
+
+        for preset in presets {
+            let name = preset.name();
+            let parsed: InputMethodPreset = name.parse().expect("Failed to parse preset name");
+            assert_eq!(parsed, preset);
+            assert_eq!(preset.to_string(), name);
+
+            let im = preset.to_input_method();
+            assert!(!im.rules.is_empty(), "Preset {} has empty rules", name);
+            assert_eq!(im.name(), name);
+        }
+    }
+
+    #[test]
+    fn test_input_method_from_preset() {
+        let im_telex = InputMethod::from_preset(InputMethodPreset::Telex);
+        assert_eq!(im_telex.name(), "Telex");
+        assert!(!im_telex.rules.is_empty());
+
+        let im_vni = InputMethod::from_preset(InputMethodPreset::Vni);
+        assert_eq!(im_vni.name(), "VNI");
+        assert!(!im_vni.rules.is_empty());
+    }
+
+    #[test]
+    fn test_preset_from_str_case_insensitive() {
+        assert_eq!("telex".parse::<InputMethodPreset>().unwrap(), InputMethodPreset::Telex);
+        assert_eq!("VNI".parse::<InputMethodPreset>().unwrap(), InputMethodPreset::Vni);
+        assert_eq!("viqr".parse::<InputMethodPreset>().unwrap(), InputMethodPreset::Viqr);
+        assert_eq!("microsoft layout".parse::<InputMethodPreset>().unwrap(), InputMethodPreset::MicrosoftLayout);
+        assert_eq!("telex 2".parse::<InputMethodPreset>().unwrap(), InputMethodPreset::Telex2);
+        assert_eq!("telex + vni".parse::<InputMethodPreset>().unwrap(), InputMethodPreset::TelexVni);
+        assert_eq!("telex w".parse::<InputMethodPreset>().unwrap(), InputMethodPreset::TelexW);
+    }
 }
+

@@ -167,7 +167,7 @@ pub mod parallel {
 pub use config::{Config, ConfigBuilder};
 pub use encoder::{Charset, encode_charset};
 pub use engine::{Engine, RestoreMark, Transformation, TransformationStack};
-pub use input_method::InputMethod;
+pub use input_method::{InputMethod, InputMethodPreset};
 pub use mode::{Mode, OutputOptions};
 
 /// Advanced types for low-level interaction with the engine.
@@ -176,7 +176,7 @@ pub use mode::{Mode, OutputOptions};
 /// for users who need to build custom input methods or analyze the composition state.
 pub mod advanced {
     pub use crate::engine::{MAX_ACTIVE_TRANS, Transformation, TransformationStack};
-    pub use crate::input_method::{EffectType, Mark, Rule, Tone};
+    pub use crate::input_method::{EffectType, InputMethodPreset, Mark, Rule, Tone};
     pub use crate::mode::OutputOptions;
 
     pub use crate::charset_def::{

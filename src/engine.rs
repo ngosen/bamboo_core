@@ -305,40 +305,54 @@ impl Engine {
 
     /// Creates a new engine with a specific input method and configuration.
     pub fn with_config(input_method: InputMethod, config: Config) -> Self {
-        let mut ascii_rules: [Vec<Rule>; 128] = std::array::from_fn(|_| Vec::new());
-        let mut non_ascii_rules: Vec<(char, Vec<Rule>)> = Vec::new();
+        // Pass 1: Count rules per ASCII key on the stack — zero heap allocations
+        let mut ascii_counts = [0u16; 128];
+        let mut non_ascii_keys: Vec<char> = Vec::new();
 
         for rule in &input_method.rules {
             let key = lower(rule.key);
             if (key as u32) < 128 {
-                ascii_rules[key as usize].push(*rule);
-            } else if let Some((_, rules)) = non_ascii_rules.iter_mut().find(|(k, _)| *k == key) {
-                rules.push(*rule);
-            } else {
-                non_ascii_rules.push((key, vec![*rule]));
+                ascii_counts[key as usize] += 1;
+            } else if !non_ascii_keys.contains(&key) {
+                non_ascii_keys.push(key);
             }
         }
 
-        let total_rules: usize = ascii_rules.iter().map(|v| v.len()).sum::<usize>()
-            + non_ascii_rules.iter().map(|(_, v)| v.len()).sum::<usize>();
-        let mut all_rules_vec = Vec::with_capacity(total_rules);
+        // Compute prefix sums for contiguous slices in `all_rules`
+        let mut all_rules = vec![Rule::default(); input_method.rules.len()].into_boxed_slice();
         let mut ascii_rule_indices = [(0u16, 0u16); 128];
-        let mut non_ascii_indices_vec = Vec::with_capacity(non_ascii_rules.len());
+        let mut ascii_write_pos = [0u16; 128];
+        let mut offset = 0u16;
 
-        for (ascii_char, rules) in ascii_rules.into_iter().enumerate() {
-            if !rules.is_empty() {
-                let start = all_rules_vec.len() as u16;
-                all_rules_vec.extend(rules);
-                let end = all_rules_vec.len() as u16;
-                ascii_rule_indices[ascii_char] = (start, end);
+        for (ascii_char, &count) in ascii_counts.iter().enumerate() {
+            if count > 0 {
+                ascii_rule_indices[ascii_char] = (offset, offset + count);
+                ascii_write_pos[ascii_char] = offset;
+                offset += count;
             }
         }
 
-        for (key, rules) in non_ascii_rules {
-            let start = all_rules_vec.len() as u16;
-            all_rules_vec.extend(rules);
-            let end = all_rules_vec.len() as u16;
-            non_ascii_indices_vec.push((key, (start, end)));
+        let mut non_ascii_indices = Vec::with_capacity(non_ascii_keys.len());
+        let mut non_ascii_write_pos = Vec::with_capacity(non_ascii_keys.len());
+        for &k in &non_ascii_keys {
+            let count = input_method.rules.iter().filter(|r| lower(r.key) == k).count() as u16;
+            non_ascii_indices.push((k, (offset, offset + count)));
+            non_ascii_write_pos.push(offset);
+            offset += count;
+        }
+
+        // Pass 2: Place rules directly into all_rules at precomputed offsets — O(N) stable partition
+        for rule in &input_method.rules {
+            let key = lower(rule.key);
+            if (key as u32) < 128 {
+                let pos = ascii_write_pos[key as usize] as usize;
+                all_rules[pos] = *rule;
+                ascii_write_pos[key as usize] += 1;
+            } else if let Some(idx) = non_ascii_keys.iter().position(|&k| k == key) {
+                let pos = non_ascii_write_pos[idx] as usize;
+                all_rules[pos] = *rule;
+                non_ascii_write_pos[idx] += 1;
+            }
         }
 
         let mut ascii_effect_keys = [false; 128];
@@ -359,9 +373,9 @@ impl Engine {
             active_buffer: [Transformation::default(); MAX_ACTIVE_TRANS],
             active_len: 0,
             input_method,
-            all_rules: all_rules_vec.into_boxed_slice(),
+            all_rules,
             ascii_rule_indices,
-            non_ascii_rule_indices: non_ascii_indices_vec.into_boxed_slice(),
+            non_ascii_rule_indices: non_ascii_indices.into_boxed_slice(),
             ascii_effect_keys,
             non_ascii_effect_keys,
             config,
