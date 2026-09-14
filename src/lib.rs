@@ -166,7 +166,7 @@ pub mod parallel {
 
 pub use config::{Config, ConfigBuilder};
 pub use encoder::{Charset, encode_charset};
-pub use engine::{Engine, RestoreMark, Transformation, TransformationStack};
+pub use engine::{Engine, EngineRules, RestoreMark, Transformation, TransformationStack};
 pub use input_method::{InputMethod, InputMethodPreset};
 pub use mode::{Mode, OutputOptions};
 
@@ -175,7 +175,7 @@ pub use mode::{Mode, OutputOptions};
 /// This module exposes internal structures and raw definitions
 /// for users who need to build custom input methods or analyze the composition state.
 pub mod advanced {
-    pub use crate::engine::{MAX_ACTIVE_TRANS, Transformation, TransformationStack};
+    pub use crate::engine::{EngineRules, MAX_ACTIVE_TRANS, Transformation, TransformationStack};
     pub use crate::input_method::{EffectType, InputMethodPreset, Mark, Rule, Tone};
     pub use crate::mode::OutputOptions;
 

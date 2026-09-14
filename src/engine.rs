@@ -1,5 +1,8 @@
 //! The core engine that processes keypresses and maintains the IME state.
 
+use crate::input_method::InputMethodPreset;
+use std::sync::Arc;
+
 use std::borrow::Cow;
 
 use crate::config::Config;
@@ -98,15 +101,7 @@ impl Transformation {
             Some(idx) => idx,
             None => TARGET_NONE,
         };
-        Self {
-            key,
-            effect_on,
-            result,
-            target_idx,
-            effect,
-            effect_type,
-            is_upper_case,
-        }
+        Self { key, effect_on, result, target_idx, effect, effect_type, is_upper_case }
     }
 
     /// Creates a new transformation from a [`Rule`].
@@ -126,11 +121,7 @@ impl Transformation {
     /// Returns the target transformation index, if any.
     #[inline]
     pub const fn target(&self) -> Option<u8> {
-        if self.target_idx == TARGET_NONE {
-            None
-        } else {
-            Some(self.target_idx)
-        }
+        if self.target_idx == TARGET_NONE { None } else { Some(self.target_idx) }
     }
 
     /// Returns the raw target index (`0xFF` for None).
@@ -257,6 +248,88 @@ fn uoh_tail_match(s: &str) -> bool {
     })
 }
 
+/// Precomputed, partitioned rules and lookup tables for fast key evaluation.
+#[derive(Clone, Debug)]
+pub struct EngineRules {
+    pub(crate) all_rules: Arc<[Rule]>,
+    pub(crate) ascii_rule_indices: [(u16, u16); 128],
+    pub(crate) non_ascii_rule_indices: Arc<[(char, (u16, u16))]>,
+    pub(crate) ascii_effect_keys: [bool; 128],
+    pub(crate) non_ascii_effect_keys: Arc<[char]>,
+}
+
+impl EngineRules {
+    /// Constructs partitioned engine rules from an [`InputMethod`].
+    pub fn from_input_method(im: &InputMethod) -> Self {
+        let mut ascii_counts = [0u16; 128];
+        let mut non_ascii_keys: Vec<char> = Vec::new();
+
+        for rule in &im.rules {
+            let key = lower(rule.key);
+            if (key as u32) < 128 {
+                ascii_counts[key as usize] += 1;
+            } else if !non_ascii_keys.contains(&key) {
+                non_ascii_keys.push(key);
+            }
+        }
+
+        let mut all_rules = vec![Rule::default(); im.rules.len()];
+        let mut ascii_rule_indices = [(0u16, 0u16); 128];
+        let mut ascii_write_pos = [0u16; 128];
+        let mut offset = 0u16;
+
+        for (ascii_char, &count) in ascii_counts.iter().enumerate() {
+            if count > 0 {
+                ascii_rule_indices[ascii_char] = (offset, offset + count);
+                ascii_write_pos[ascii_char] = offset;
+                offset += count;
+            }
+        }
+
+        let mut non_ascii_indices = Vec::with_capacity(non_ascii_keys.len());
+        let mut non_ascii_write_pos = Vec::with_capacity(non_ascii_keys.len());
+        for &k in &non_ascii_keys {
+            let count = im.rules.iter().filter(|r| lower(r.key) == k).count() as u16;
+            non_ascii_indices.push((k, (offset, offset + count)));
+            non_ascii_write_pos.push(offset);
+            offset += count;
+        }
+
+        for rule in &im.rules {
+            let key = lower(rule.key);
+            if (key as u32) < 128 {
+                let pos = ascii_write_pos[key as usize] as usize;
+                all_rules[pos] = *rule;
+                ascii_write_pos[key as usize] += 1;
+            } else if let Some(idx) = non_ascii_keys.iter().position(|&k| k == key) {
+                let pos = non_ascii_write_pos[idx] as usize;
+                all_rules[pos] = *rule;
+                non_ascii_write_pos[idx] += 1;
+            }
+        }
+
+        let mut ascii_effect_keys = [false; 128];
+        let mut non_ascii_effect_keys: Vec<char> = Vec::new();
+        for key in &im.keys {
+            if key.is_ascii() {
+                ascii_effect_keys[*key as usize] = true;
+            } else {
+                non_ascii_effect_keys.push(*key);
+            }
+        }
+        non_ascii_effect_keys.sort_unstable();
+        non_ascii_effect_keys.dedup();
+
+        Self {
+            all_rules: all_rules.into(),
+            ascii_rule_indices,
+            non_ascii_rule_indices: non_ascii_indices.into(),
+            ascii_effect_keys,
+            non_ascii_effect_keys: non_ascii_effect_keys.into(),
+        }
+    }
+}
+
 /// The main stateful processor of the Vietnamese Input Method Engine.
 ///
 /// It maintains an internal buffer of transformations and produces the correctly marked Vietnamese text.
@@ -270,12 +343,8 @@ pub struct Engine {
     active_buffer: [Transformation; MAX_ACTIVE_TRANS],
     active_len: usize,
 
-    input_method: InputMethod,
-    all_rules: Box<[Rule]>,
-    ascii_rule_indices: [(u16, u16); 128],
-    non_ascii_rule_indices: Box<[(char, (u16, u16))]>,
-    ascii_effect_keys: [bool; 128],
-    non_ascii_effect_keys: Vec<char>,
+    input_method: Arc<InputMethod>,
+    rules: Arc<EngineRules>,
     config: Config,
 
     /// Stack buffers to avoid per-keystroke heap allocations.
@@ -303,81 +372,40 @@ impl Engine {
         Self::with_config(input_method, Config::default())
     }
 
+    /// Creates a new engine using a standard [`InputMethodPreset`] with zero-allocation rule sharing.
+    pub fn from_preset(preset: InputMethodPreset) -> Self {
+        Self::from_preset_with_config(preset, Config::default())
+    }
+
+    /// Creates a new engine using a standard [`InputMethodPreset`] and configuration with zero-allocation rule sharing.
+    pub fn from_preset_with_config(preset: InputMethodPreset, config: Config) -> Self {
+        let (im, rules) = crate::input_method::get_preset_shared(preset);
+        Self::with_shared_rules(im, rules, config)
+    }
+
     /// Creates a new engine with a specific input method and configuration.
     pub fn with_config(input_method: InputMethod, config: Config) -> Self {
-        // Pass 1: Count rules per ASCII key on the stack — zero heap allocations
-        let mut ascii_counts = [0u16; 128];
-        let mut non_ascii_keys: Vec<char> = Vec::new();
-
-        for rule in &input_method.rules {
-            let key = lower(rule.key);
-            if (key as u32) < 128 {
-                ascii_counts[key as usize] += 1;
-            } else if !non_ascii_keys.contains(&key) {
-                non_ascii_keys.push(key);
-            }
+        if let Some((preset_im, preset_rules)) =
+            crate::input_method::find_preset_shared(&input_method)
+        {
+            return Self::with_shared_rules(preset_im, preset_rules, config);
         }
+        let rules = Arc::new(EngineRules::from_input_method(&input_method));
+        Self::with_shared_rules(Arc::new(input_method), rules, config)
+    }
 
-        // Compute prefix sums for contiguous slices in `all_rules`
-        let mut all_rules = vec![Rule::default(); input_method.rules.len()].into_boxed_slice();
-        let mut ascii_rule_indices = [(0u16, 0u16); 128];
-        let mut ascii_write_pos = [0u16; 128];
-        let mut offset = 0u16;
-
-        for (ascii_char, &count) in ascii_counts.iter().enumerate() {
-            if count > 0 {
-                ascii_rule_indices[ascii_char] = (offset, offset + count);
-                ascii_write_pos[ascii_char] = offset;
-                offset += count;
-            }
-        }
-
-        let mut non_ascii_indices = Vec::with_capacity(non_ascii_keys.len());
-        let mut non_ascii_write_pos = Vec::with_capacity(non_ascii_keys.len());
-        for &k in &non_ascii_keys {
-            let count = input_method.rules.iter().filter(|r| lower(r.key) == k).count() as u16;
-            non_ascii_indices.push((k, (offset, offset + count)));
-            non_ascii_write_pos.push(offset);
-            offset += count;
-        }
-
-        // Pass 2: Place rules directly into all_rules at precomputed offsets — O(N) stable partition
-        for rule in &input_method.rules {
-            let key = lower(rule.key);
-            if (key as u32) < 128 {
-                let pos = ascii_write_pos[key as usize] as usize;
-                all_rules[pos] = *rule;
-                ascii_write_pos[key as usize] += 1;
-            } else if let Some(idx) = non_ascii_keys.iter().position(|&k| k == key) {
-                let pos = non_ascii_write_pos[idx] as usize;
-                all_rules[pos] = *rule;
-                non_ascii_write_pos[idx] += 1;
-            }
-        }
-
-        let mut ascii_effect_keys = [false; 128];
-        let mut non_ascii_effect_keys: Vec<char> = Vec::new();
-        for key in &input_method.keys {
-            if key.is_ascii() {
-                ascii_effect_keys[*key as usize] = true;
-            } else {
-                non_ascii_effect_keys.push(*key);
-            }
-        }
-        non_ascii_effect_keys.sort_unstable();
-        non_ascii_effect_keys.dedup();
-
+    pub(crate) fn with_shared_rules(
+        input_method: Arc<InputMethod>,
+        rules: Arc<EngineRules>,
+        config: Config,
+    ) -> Self {
         Self {
             committed_text: String::with_capacity(128),
             cached_output: String::with_capacity(32),
             active_buffer: [Transformation::default(); MAX_ACTIVE_TRANS],
             active_len: 0,
             input_method,
-            all_rules,
-            ascii_rule_indices,
-            non_ascii_rule_indices: non_ascii_indices.into_boxed_slice(),
-            ascii_effect_keys,
-            non_ascii_effect_keys,
+            rules,
             config,
 
             work_comp: TransformationStack::new(),
@@ -469,7 +497,7 @@ impl Engine {
     }
 
     /// Returns a reference to the current input method.
-    pub const fn input_method(&self) -> &InputMethod {
+    pub fn input_method(&self) -> &InputMethod {
         &self.input_method
     }
 
@@ -495,14 +523,15 @@ impl Engine {
     fn get_applicable_rules(&self, key: char) -> &[Rule] {
         let key = lower(key);
         if key.is_ascii() {
-            let (start, end) = self.ascii_rule_indices[key as usize];
-            &self.all_rules[start as usize..end as usize]
+            let (start, end) = self.rules.ascii_rule_indices[key as usize];
+            &self.rules.all_rules[start as usize..end as usize]
         } else {
-            self.non_ascii_rule_indices
+            self.rules
+                .non_ascii_rule_indices
                 .binary_search_by_key(&key, |(k, _)| *k)
                 .map(|idx| {
-                    let (start, end) = self.non_ascii_rule_indices[idx].1;
-                    &self.all_rules[start as usize..end as usize]
+                    let (start, end) = self.rules.non_ascii_rule_indices[idx].1;
+                    &self.rules.all_rules[start as usize..end as usize]
                 })
                 .unwrap_or(&[])
         }
@@ -510,8 +539,8 @@ impl Engine {
 
     fn can_process_key_raw(&self, lower_key: char) -> bool {
         if crate::phonetics::is_alpha(lower_key)
-            || (lower_key.is_ascii() && self.ascii_effect_keys[lower_key as usize])
-            || self.non_ascii_effect_keys.binary_search(&lower_key).is_ok()
+            || (lower_key.is_ascii() && self.rules.ascii_effect_keys[lower_key as usize])
+            || self.rules.non_ascii_effect_keys.binary_search(&lower_key).is_ok()
         {
             return true;
         }
@@ -582,9 +611,7 @@ impl Engine {
         });
 
         composition.extend_from_slice(trans_buf.as_slice());
-        if self.config.free_tone_marking
-            && self.is_valid_internal(composition.as_slice(), false)
-        {
+        if self.config.free_tone_marking && self.is_valid_internal(composition.as_slice(), false) {
             crate::syllable::refresh_last_tone_target_into(
                 composition.as_mut_slice(),
                 self.config.std_tone_style,
@@ -922,12 +949,8 @@ impl Engine {
 
             if has_transforms && !self.is_valid_internal(work.as_slice(), false) {
                 let raw_comp = crate::syllable::break_composition_slice(work.as_slice());
-                let raw_len = work
-                    .as_slice()
-                    .iter()
-                    .filter(|t| t.key != '\0')
-                    .count()
-                    .min(MAX_ACTIVE_TRANS);
+                let raw_len =
+                    work.as_slice().iter().filter(|t| t.key != '\0').count().min(MAX_ACTIVE_TRANS);
                 work.clear();
                 work.extend_from_slice(&raw_comp[..raw_len]);
                 self.english_bypass = true;
@@ -1016,7 +1039,8 @@ impl Engine {
             if active.is_empty() {
                 return Cow::Borrowed(&self.committed_text);
             }
-            let mut result = String::with_capacity(self.committed_text.len() + self.cached_output.len());
+            let mut result =
+                String::with_capacity(self.committed_text.len() + self.cached_output.len());
             result.push_str(&self.committed_text);
             result.push_str(&self.cached_output);
             return Cow::Owned(result);
@@ -1093,8 +1117,11 @@ impl Engine {
 
         let mut new_comp = TransformationStack::new();
         if self.scratch_engine.is_none() {
-            self.scratch_engine =
-                Some(Box::new(Self::with_config(self.input_method.clone(), self.config)));
+            self.scratch_engine = Some(Box::new(Self::with_shared_rules(
+                Arc::clone(&self.input_method),
+                Arc::clone(&self.rules),
+                self.config,
+            )));
         }
         let temp_engine = self.scratch_engine.as_mut().unwrap();
         temp_engine.reset();
@@ -1401,5 +1428,26 @@ mod tests {
         assert!(matches!(e.output(), Cow::Borrowed(_)));
         assert_eq!(e.output_str(), "");
         assert_eq!(e.get_processed_str(OutputOptions::FULL_TEXT), "ti\u{1ebf}ng");
+    }
+
+    #[test]
+    fn test_engine_from_preset_and_shared_rules() {
+        let mut e = Engine::from_preset(InputMethodPreset::Telex);
+        e.process_str("tieengs", Mode::Vietnamese);
+        assert_eq!(e.output_str(), "tiếng");
+
+        let mut evni = Engine::from_preset(InputMethodPreset::Vni);
+        evni.process_str("vie6t5", Mode::Vietnamese);
+        assert_eq!(evni.output_str(), "việt");
+
+        // Verify shared rules pointer equivalence for presets
+        let e1 = Engine::from_preset(InputMethodPreset::Telex);
+        let e2 = Engine::from_preset(InputMethodPreset::Telex);
+        assert!(Arc::ptr_eq(&e1.rules, &e2.rules));
+        assert!(Arc::ptr_eq(&e1.input_method, &e2.input_method));
+
+        // Verify Engine::new also picks up shared rules automatically
+        let e3 = Engine::new(InputMethod::telex());
+        assert!(Arc::ptr_eq(&e1.rules, &e3.rules));
     }
 }

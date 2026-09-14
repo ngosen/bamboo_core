@@ -1,3 +1,5 @@
+use std::sync::Arc;
+use crate::engine::EngineRules;
 use std::sync::LazyLock;
 
 /// Standard input method presets supported natively by Bamboo.
@@ -42,17 +44,7 @@ impl InputMethodPreset {
 
     /// Returns a pre-parsed [`InputMethod`] instance for this preset.
     pub fn to_input_method(self) -> InputMethod {
-        match self {
-            Self::Telex => PRESET_TELEX.clone(),
-            Self::Vni => PRESET_VNI.clone(),
-            Self::Viqr => PRESET_VIQR.clone(),
-            Self::MicrosoftLayout => PRESET_MICROSOFT.clone(),
-            Self::Telex2 => PRESET_TELEX_2.clone(),
-            Self::TelexVni => PRESET_TELEX_VNI.clone(),
-            Self::TelexVniViqr => PRESET_TELEX_VNI_VIQR.clone(),
-            Self::VniFrenchLayout => PRESET_VNI_FRENCH.clone(),
-            Self::TelexW => PRESET_TELEX_W.clone(),
-        }
+        (*get_preset_shared(self).0).clone()
     }
 }
 
@@ -83,18 +75,95 @@ impl std::str::FromStr for InputMethodPreset {
     }
 }
 
-static PRESET_TELEX: LazyLock<InputMethod> = LazyLock::new(|| parse_input_method("Telex"));
-static PRESET_VNI: LazyLock<InputMethod> = LazyLock::new(|| parse_input_method("VNI"));
-static PRESET_VIQR: LazyLock<InputMethod> = LazyLock::new(|| parse_input_method("VIQR"));
-static PRESET_MICROSOFT: LazyLock<InputMethod> =
-    LazyLock::new(|| parse_input_method("Microsoft layout"));
-static PRESET_TELEX_2: LazyLock<InputMethod> = LazyLock::new(|| parse_input_method("Telex 2"));
-static PRESET_TELEX_VNI: LazyLock<InputMethod> = LazyLock::new(|| parse_input_method("Telex + VNI"));
-static PRESET_TELEX_VNI_VIQR: LazyLock<InputMethod> =
-    LazyLock::new(|| parse_input_method("Telex + VNI + VIQR"));
-static PRESET_VNI_FRENCH: LazyLock<InputMethod> =
-    LazyLock::new(|| parse_input_method("VNI Bàn phím tiếng Pháp"));
-static PRESET_TELEX_W: LazyLock<InputMethod> = LazyLock::new(|| parse_input_method("Telex W"));
+static PRESET_TELEX_SHARED: LazyLock<(Arc<InputMethod>, Arc<EngineRules>)> =
+    LazyLock::new(|| {
+        let im = Arc::new(parse_input_method("Telex"));
+        let rules = Arc::new(EngineRules::from_input_method(&im));
+        (im, rules)
+    });
+static PRESET_VNI_SHARED: LazyLock<(Arc<InputMethod>, Arc<EngineRules>)> =
+    LazyLock::new(|| {
+        let im = Arc::new(parse_input_method("VNI"));
+        let rules = Arc::new(EngineRules::from_input_method(&im));
+        (im, rules)
+    });
+static PRESET_VIQR_SHARED: LazyLock<(Arc<InputMethod>, Arc<EngineRules>)> =
+    LazyLock::new(|| {
+        let im = Arc::new(parse_input_method("VIQR"));
+        let rules = Arc::new(EngineRules::from_input_method(&im));
+        (im, rules)
+    });
+static PRESET_MICROSOFT_SHARED: LazyLock<(Arc<InputMethod>, Arc<EngineRules>)> =
+    LazyLock::new(|| {
+        let im = Arc::new(parse_input_method("Microsoft layout"));
+        let rules = Arc::new(EngineRules::from_input_method(&im));
+        (im, rules)
+    });
+static PRESET_TELEX_2_SHARED: LazyLock<(Arc<InputMethod>, Arc<EngineRules>)> =
+    LazyLock::new(|| {
+        let im = Arc::new(parse_input_method("Telex 2"));
+        let rules = Arc::new(EngineRules::from_input_method(&im));
+        (im, rules)
+    });
+static PRESET_TELEX_VNI_SHARED: LazyLock<(Arc<InputMethod>, Arc<EngineRules>)> =
+    LazyLock::new(|| {
+        let im = Arc::new(parse_input_method("Telex + VNI"));
+        let rules = Arc::new(EngineRules::from_input_method(&im));
+        (im, rules)
+    });
+static PRESET_TELEX_VNI_VIQR_SHARED: LazyLock<(Arc<InputMethod>, Arc<EngineRules>)> =
+    LazyLock::new(|| {
+        let im = Arc::new(parse_input_method("Telex + VNI + VIQR"));
+        let rules = Arc::new(EngineRules::from_input_method(&im));
+        (im, rules)
+    });
+static PRESET_VNI_FRENCH_SHARED: LazyLock<(Arc<InputMethod>, Arc<EngineRules>)> =
+    LazyLock::new(|| {
+        let im = Arc::new(parse_input_method("VNI Bàn phím tiếng Pháp"));
+        let rules = Arc::new(EngineRules::from_input_method(&im));
+        (im, rules)
+    });
+static PRESET_TELEX_W_SHARED: LazyLock<(Arc<InputMethod>, Arc<EngineRules>)> =
+    LazyLock::new(|| {
+        let im = Arc::new(parse_input_method("Telex W"));
+        let rules = Arc::new(EngineRules::from_input_method(&im));
+        (im, rules)
+    });
+
+pub(crate) fn get_preset_shared(preset: InputMethodPreset) -> (Arc<InputMethod>, Arc<EngineRules>) {
+    let entry = match preset {
+        InputMethodPreset::Telex => &PRESET_TELEX_SHARED,
+        InputMethodPreset::Vni => &PRESET_VNI_SHARED,
+        InputMethodPreset::Viqr => &PRESET_VIQR_SHARED,
+        InputMethodPreset::MicrosoftLayout => &PRESET_MICROSOFT_SHARED,
+        InputMethodPreset::Telex2 => &PRESET_TELEX_2_SHARED,
+        InputMethodPreset::TelexVni => &PRESET_TELEX_VNI_SHARED,
+        InputMethodPreset::TelexVniViqr => &PRESET_TELEX_VNI_VIQR_SHARED,
+        InputMethodPreset::VniFrenchLayout => &PRESET_VNI_FRENCH_SHARED,
+        InputMethodPreset::TelexW => &PRESET_TELEX_W_SHARED,
+    };
+    (Arc::clone(&entry.0), Arc::clone(&entry.1))
+}
+
+pub(crate) fn find_preset_shared(im: &InputMethod) -> Option<(Arc<InputMethod>, Arc<EngineRules>)> {
+    let entry = match im.name {
+        "Telex" => &PRESET_TELEX_SHARED,
+        "VNI" => &PRESET_VNI_SHARED,
+        "VIQR" => &PRESET_VIQR_SHARED,
+        "Microsoft layout" => &PRESET_MICROSOFT_SHARED,
+        "Telex 2" => &PRESET_TELEX_2_SHARED,
+        "Telex + VNI" => &PRESET_TELEX_VNI_SHARED,
+        "Telex + VNI + VIQR" => &PRESET_TELEX_VNI_VIQR_SHARED,
+        "VNI Bàn phím tiếng Pháp" => &PRESET_VNI_FRENCH_SHARED,
+        "Telex W" => &PRESET_TELEX_W_SHARED,
+        _ => return None,
+    };
+    if im.rules.len() == entry.0.rules.len() {
+        Some((Arc::clone(&entry.0), Arc::clone(&entry.1)))
+    } else {
+        None
+    }
+}
 
 use phf::{Map, phf_map};
 
@@ -279,47 +348,47 @@ impl InputMethod {
 
     /// Standard Telex input method (lazily cached across calls).
     pub fn telex() -> Self {
-        PRESET_TELEX.clone()
+        (*PRESET_TELEX_SHARED.0).clone()
     }
 
     /// Standard VNI input method (using number keys, lazily cached across calls).
     pub fn vni() -> Self {
-        PRESET_VNI.clone()
+        (*PRESET_VNI_SHARED.0).clone()
     }
 
     /// Standard VIQR input method (lazily cached across calls).
     pub fn viqr() -> Self {
-        PRESET_VIQR.clone()
+        (*PRESET_VIQR_SHARED.0).clone()
     }
 
     /// Microsoft Standard Vietnamese keyboard layout (lazily cached across calls).
     pub fn microsoft_layout() -> Self {
-        PRESET_MICROSOFT.clone()
+        (*PRESET_MICROSOFT_SHARED.0).clone()
     }
 
     /// Telex variant that also supports `[` and `]` keys (lazily cached across calls).
     pub fn telex_2() -> Self {
-        PRESET_TELEX_2.clone()
+        (*PRESET_TELEX_2_SHARED.0).clone()
     }
 
     /// Combined Telex and VNI (lazily cached across calls).
     pub fn telex_vni() -> Self {
-        PRESET_TELEX_VNI.clone()
+        (*PRESET_TELEX_VNI_SHARED.0).clone()
     }
 
     /// Combined Telex, VNI, and VIQR (lazily cached across calls).
     pub fn telex_vni_viqr() -> Self {
-        PRESET_TELEX_VNI_VIQR.clone()
+        (*PRESET_TELEX_VNI_VIQR_SHARED.0).clone()
     }
 
     /// VNI for French keyboard layouts (lazily cached across calls).
     pub fn vni_french_layout() -> Self {
-        PRESET_VNI_FRENCH.clone()
+        (*PRESET_VNI_FRENCH_SHARED.0).clone()
     }
 
     /// Telex variant using `w` for marks and `z` for tone removal (lazily cached across calls).
     pub fn telex_w() -> Self {
-        PRESET_TELEX_W.clone()
+        (*PRESET_TELEX_W_SHARED.0).clone()
     }
 }
 

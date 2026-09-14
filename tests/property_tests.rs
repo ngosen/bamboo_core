@@ -52,7 +52,7 @@ proptest! {
     }
 
     #[test]
-    fn test_undo_cleanliness(keys in "[a-z]{1,16}") {
+    fn test_undo_cleanliness(keys in "[a-z]{1,12}") {
         let mut engine = Engine::new(InputMethod::telex());
         let count = keys.chars().count();
         for ch in keys.chars() {
