@@ -115,7 +115,6 @@
     clippy::redundant_clone
 )]
 
-mod charset_def;
 mod config;
 mod dfa;
 mod encoder;
@@ -166,6 +165,7 @@ pub mod parallel {
 
 pub use config::{Config, ConfigBuilder};
 pub use encoder::{Charset, encode_charset};
+pub(crate) use encoder::tables as charset_def;
 pub use engine::{Engine, EngineRules, RestoreMark, Transformation, TransformationStack};
 pub use input_method::{InputMethod, InputMethodPreset};
 pub use mode::{Mode, OutputOptions};

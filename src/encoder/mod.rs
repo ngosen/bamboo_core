@@ -15,7 +15,8 @@
 //! - **NCR Decimal** / **NCR Hex**
 //! - **Unicode C string Hex** / **Unicode C string Decimal**
 
-use crate::charset_def::{get_charset_definition, get_charset_definitions};
+pub mod tables;
+pub use tables::{get_charset_definition, get_charset_definitions};
 use std::borrow::Cow;
 use std::fmt;
 use std::str::FromStr;
