@@ -4,6 +4,8 @@
 //! bitset fast-path transition lookups, arena allocation for transformations,
 //! and the JIT compiler for pre-compiling common syllable transitions.
 
+pub mod flattener;
+
 use crate::engine::Transformation;
 use crate::input_method::InputMethod;
 use rustc_hash::FxHashMap;
