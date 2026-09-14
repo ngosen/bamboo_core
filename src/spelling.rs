@@ -1,6 +1,6 @@
 //! Vietnamese spelling validation logic based on CVC (Consonant-Vowel-Consonant) structure.
 
-use crate::utils::add_mark_to_toneless_char;
+use crate::phonetics::add_mark_to_toneless_char;
 
 // Static token representation: (chars, length)
 type Token = ([char; 4], u8);

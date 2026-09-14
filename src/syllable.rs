@@ -5,14 +5,11 @@ use crate::flattener::flatten_slice;
 use crate::input_method::{EffectType, Mark, Rule, Tone};
 use crate::mode::OutputOptions;
 use crate::spelling::{is_valid_cvc, is_valid_cvc_chars};
-use crate::utils::{
+use crate::config::Config;
+use crate::phonetics::{
     add_mark_to_char, add_tone_to_char, is_alpha, is_space, is_upper, is_vowel, lower,
 };
 
-/// Flag to enable free tone marking (allows placing tones at any time).
-pub(crate) const EFREE_TONE_MARKING: u32 = 1 << 0;
-/// Flag to use the standard Vietnamese tone style (e.g., placing tone on the second vowel in some cases).
-pub(crate) const ESTD_TONE_STYLE: u32 = 1 << 1;
 
 fn in_key_list(keys: Option<&[char]>, key: char) -> bool {
     keys.is_some_and(|ks| ks.contains(&key))
@@ -24,8 +21,8 @@ fn raw_keys_of(trans_slice: &[Transformation], out: &mut [char; 4]) -> usize {
     let mut len = 0;
     for t in trans_slice {
         if t.rule.key != '\0' && len < 4 {
-            out[len] = lower(crate::utils::add_tone_to_char(
-                crate::utils::add_mark_to_toneless_char(t.rule.key, 0),
+            out[len] = lower(crate::phonetics::add_tone_to_char(
+                crate::phonetics::add_mark_to_toneless_char(t.rule.key, 0),
                 0,
             ));
             len += 1;
@@ -613,16 +610,16 @@ fn find_mark_target_excluding(
 pub(crate) fn find_target(
     composition: &[Transformation],
     applicable_rules: &[Rule],
-    flags: u32,
+    config: Config,
 ) -> (Option<u8>, Option<Rule>) {
-    find_target_excluding(composition, applicable_rules, flags, None)
+    find_target_excluding(composition, applicable_rules, config, None)
 }
 
 /// Finds the target excluding a specific target index (e.g. for companion vowel in dual transformations).
 pub(crate) fn find_target_excluding(
     composition: &[Transformation],
     applicable_rules: &[Rule],
-    flags: u32,
+    config: Config,
     exclude_target: Option<u8>,
 ) -> (Option<u8>, Option<Rule>) {
     for applicable_rule in applicable_rules {
@@ -631,10 +628,10 @@ pub(crate) fn find_target_excluding(
         }
 
         let mut target: Option<u8> = None;
-        if (flags & EFREE_TONE_MARKING) != 0 {
+        if config.free_tone_marking {
             let tone = applicable_rule.get_tone();
             if has_valid_tone(composition, tone) {
-                target = find_tone_target(composition, (flags & ESTD_TONE_STYLE) != 0);
+                target = find_tone_target(composition, config.std_tone_style);
             }
         } else if let Some((idx, last_appending)) = find_last_appending_entry(composition)
             && is_vowel(last_appending.rule.effect_on)
@@ -670,16 +667,16 @@ pub(crate) fn find_target_excluding(
 fn generate_undo_transformations(
     composition: &[Transformation],
     rules: &[Rule],
-    flags: u32,
+    config: Config,
     out: &mut TransformationStack,
 ) {
     for rule in rules {
         if rule.effect_type == EffectType::ToneTransformation {
             let mut target: Option<u8> = None;
-            if (flags & EFREE_TONE_MARKING) != 0 {
+            if config.free_tone_marking {
                 let tone = rule.get_tone();
                 if has_valid_tone(composition, tone) {
-                    target = find_tone_target(composition, (flags & ESTD_TONE_STYLE) != 0);
+                    target = find_tone_target(composition, config.std_tone_style);
                 }
             } else if let Some((idx, last_appending)) = find_last_appending_entry(composition)
                 && is_vowel(last_appending.rule.effect_on)
@@ -767,7 +764,7 @@ fn contains_uho_in_composition(composition: &[Transformation]) -> bool {
 pub(crate) fn generate_transformations(
     composition: &[Transformation],
     applicable_rules: &[Rule],
-    flags: u32,
+    config: Config,
     lower_key: char,
     is_upper_case: bool,
     out: &mut TransformationStack,
@@ -794,7 +791,7 @@ pub(crate) fn generate_transformations(
         }
     }
 
-    if let (Some(target), Some(applicable_rule)) = find_target(composition, applicable_rules, flags)
+    if let (Some(target), Some(applicable_rule)) = find_target(composition, applicable_rules, config)
     {
         out.push(Transformation { rule: applicable_rule, target: Some(target), is_upper_case });
 
@@ -846,7 +843,7 @@ pub(crate) fn generate_transformations(
                 && let (Some(target2), Some(mut virtual_rule)) = find_target_excluding(
                     &new_comp[..new_len],
                     applicable_rules,
-                    flags,
+                    config,
                     Some(target),
                 )
                 && virtual_rule.get_mark() == Mark::Horn
@@ -859,7 +856,7 @@ pub(crate) fn generate_transformations(
                 });
             } else if !is_valid(&new_comp[..new_len], true)
                 && let (Some(target2), Some(mut virtual_rule)) =
-                    find_target(&new_comp[..new_len], applicable_rules, flags)
+                    find_target(&new_comp[..new_len], applicable_rules, config)
                 && virtual_rule.get_mark() != Mark::Horn
             {
                 virtual_rule.key = '\0';
@@ -908,7 +905,7 @@ pub(crate) fn generate_transformations(
                     tmp[base_len] = trans;
 
                     if let (Some(target), Some(applicable_rule)) =
-                        find_target(&tmp[..tmp_len], applicable_rules, flags)
+                        find_target(&tmp[..tmp_len], applicable_rules, config)
                         && target_idx.map(|v| v as u8) != Some(target)
                     {
                         out.push(trans);
@@ -923,7 +920,7 @@ pub(crate) fn generate_transformations(
             }
         }
 
-        generate_undo_transformations(composition, applicable_rules, flags, out);
+        generate_undo_transformations(composition, applicable_rules, config, out);
         if !out.is_empty() {
             let has_raw_cancel = out.as_slice().iter().any(|t| {
                 t.rule.effect_type == EffectType::MarkTransformation

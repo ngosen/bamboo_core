@@ -59,7 +59,12 @@ impl Config {
         ConfigBuilder::new()
     }
 
-    pub(crate) const fn to_flags(self) -> u32 {
+    /// Converts the configuration into an integer bitmask of flags.
+    ///
+    /// - Bit 0 (0x01): `free_tone_marking`
+    /// - Bit 1 (0x02): `std_tone_style`
+    /// - Bit 2 (0x04): `auto_correct`
+    pub const fn to_flags(self) -> u32 {
         let mut flags = 0;
         if self.free_tone_marking {
             flags |= 1 << 0;

@@ -1,7 +1,7 @@
 use phf::{Map, phf_map};
 
 use crate::input_method_def::InputMethodDef;
-use crate::utils::{add_mark_to_toneless_char, add_tone_to_char, is_vowel};
+use crate::phonetics::{add_mark_to_toneless_char, add_tone_to_char, is_vowel};
 
 /// Represents a Vietnamese tone mark.
 #[repr(u8)]

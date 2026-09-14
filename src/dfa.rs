@@ -291,19 +291,19 @@ pub struct DfaCompiler<'a> {
     /// The input method used for compiling transitions.
     #[allow(dead_code)]
     pub input_method: &'a InputMethod,
-    /// Bitmask configuration flags.
+    /// Engine configuration.
     #[allow(dead_code)]
-    pub flags: u32,
+    pub config: crate::Config,
     /// The compiled DFA instance.
     pub dfa: Dfa,
     engine: crate::Engine,
 }
 
 impl<'a> DfaCompiler<'a> {
-    /// Creates a new compiler instance for a given input method and configuration flags.
-    pub fn new(im: &'a InputMethod, flags: u32) -> Self {
-        let engine = crate::Engine::with_config(im.clone(), crate::Config::from_flags(flags));
-        Self { input_method: im, flags, dfa: Dfa::new(), engine }
+    /// Creates a new compiler instance for a given input method and configuration.
+    pub fn new(im: &'a InputMethod, config: crate::Config) -> Self {
+        let engine = crate::Engine::with_config(im.clone(), config);
+        Self { input_method: im, config, dfa: Dfa::new(), engine }
     }
 
     /// Compiles common Vietnamese syllables into the DFA.

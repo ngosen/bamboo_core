@@ -5,7 +5,7 @@ use std::borrow::Cow;
 use crate::config::Config;
 use crate::input_method::{EffectType, InputMethod, Mark, Rule};
 use crate::mode::{Mode, OutputOptions};
-use crate::utils::{is_upper, lower};
+use crate::phonetics::{is_upper, lower};
 
 /// Options for restoring or refreshing tone targets when removing characters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -347,7 +347,7 @@ impl Engine {
         note = "Engine::warm_up() is unstable and may be removed. It uses a Telex-biased heuristic and may regress cold-start or non-Telex workloads."
     )]
     pub fn warm_up(&mut self) {
-        let mut compiler = crate::dfa::DfaCompiler::new(&self.input_method, self.config.to_flags());
+        let mut compiler = crate::dfa::DfaCompiler::new(&self.input_method, self.config);
         compiler.compile_common();
         self.dfa = compiler.dfa;
         self.current_state_id = 0;
@@ -370,16 +370,16 @@ impl Engine {
     }
 
     fn can_process_key_raw(&self, lower_key: char) -> bool {
-        if crate::utils::is_alpha(lower_key)
+        if crate::phonetics::is_alpha(lower_key)
             || (lower_key.is_ascii() && self.ascii_effect_keys[lower_key as usize])
             || self.non_ascii_effect_keys.binary_search(&lower_key).is_ok()
         {
             return true;
         }
-        if crate::utils::is_word_break_symbol(lower_key) {
+        if crate::phonetics::is_word_break_symbol(lower_key) {
             return false;
         }
-        crate::utils::is_vietnamese_rune(lower_key)
+        crate::phonetics::is_vietnamese_rune(lower_key)
     }
 
     fn generate_transformations(
@@ -391,17 +391,17 @@ impl Engine {
         let lower_key = lower(key);
         let mut trans_buf = TransformationStack::new();
 
-        crate::bamboo_util::generate_transformations(
+        crate::syllable::generate_transformations(
             composition.as_slice(),
             self.get_applicable_rules(lower_key),
-            self.config.to_flags(),
+            self.config,
             lower_key,
             is_upper_case,
             &mut trans_buf,
         );
 
         if trans_buf.is_empty() {
-            crate::bamboo_util::generate_fallback_transformations(
+            crate::syllable::generate_fallback_transformations(
                 self.get_applicable_rules(lower_key),
                 lower_key,
                 is_upper_case,
@@ -421,10 +421,10 @@ impl Engine {
                         OutputOptions::TONE_LESS | OutputOptions::LOWER_CASE,
                     );
                     if uoh_tail_match(&current_str) {
-                        let (target, rule) = crate::bamboo_util::find_target(
+                        let (target, rule) = crate::syllable::find_target(
                             &tmp_data[..combined_len],
                             self.get_applicable_rules(self.input_method.super_keys[0]),
-                            self.config.to_flags(),
+                            self.config,
                         );
                         if let (Some(target), Some(mut rule)) = (target, rule) {
                             rule.key = '\0';
@@ -447,12 +447,12 @@ impl Engine {
         });
 
         composition.extend_from_slice(trans_buf.as_slice());
-        if self.config.to_flags() & crate::bamboo_util::EFREE_TONE_MARKING != 0
+        if self.config.free_tone_marking
             && self.is_valid_internal(composition.as_slice(), false)
         {
-            crate::bamboo_util::refresh_last_tone_target_into(
+            crate::syllable::refresh_last_tone_target_into(
                 composition.as_mut_slice(),
-                self.config.to_flags() & crate::bamboo_util::ESTD_TONE_STYLE != 0,
+                self.config.std_tone_style,
             );
         }
         has_undo
@@ -466,7 +466,7 @@ impl Engine {
         while idx > 0 {
             let tmp = &composition[idx - 1];
             if tmp.target.is_none() {
-                let is_v = crate::utils::is_vowel(tmp.rule.result);
+                let is_v = crate::phonetics::is_vowel(tmp.rule.result);
                 if is_v {
                     if found_vowel && onset_count > 0 {
                         break;
@@ -680,7 +680,7 @@ impl Engine {
         // English mode or English bypass active: skip all Vietnamese processing.
         // Direct buffer append — no DFA lookup, snapshot saved for backspace.
         if mode == Mode::English || self.english_bypass {
-            if crate::utils::is_word_break_symbol(lower_key) && self.active_len > 0 {
+            if crate::phonetics::is_word_break_symbol(lower_key) && self.active_len > 0 {
                 self.commit();
             }
             if self.active_len >= MAX_ACTIVE_TRANS {
@@ -690,9 +690,9 @@ impl Engine {
                 self.push_snapshot();
             }
             self.active_buffer[self.active_len] =
-                crate::bamboo_util::new_appending_trans(lower_key, is_upper_case);
+                crate::syllable::new_appending_trans(lower_key, is_upper_case);
             self.active_len += 1;
-            if crate::utils::is_word_break_symbol(lower_key) {
+            if crate::phonetics::is_word_break_symbol(lower_key) {
                 self.commit();
             }
             self.current_state_id = 0;
@@ -743,7 +743,7 @@ impl Engine {
 
         // Slow path: validate key and handle word breaks
         if !self.can_process_key_raw(lower_key) {
-            if crate::utils::is_word_break_symbol(lower_key) {
+            if crate::phonetics::is_word_break_symbol(lower_key) {
                 self.commit();
             }
             // Snapshot before push_active so backspace can restore previous state.
@@ -752,9 +752,9 @@ impl Engine {
             if self.active_len > 0 {
                 self.push_snapshot();
             }
-            let trans = crate::bamboo_util::new_appending_trans(lower_key, is_upper_case);
+            let trans = crate::syllable::new_appending_trans(lower_key, is_upper_case);
             self.push_active(trans);
-            if crate::utils::is_word_break_symbol(lower_key) {
+            if crate::phonetics::is_word_break_symbol(lower_key) {
                 self.commit();
             }
             self.current_state_id = 0;
@@ -788,7 +788,7 @@ impl Engine {
                 .any(|t| t.target.is_some() || (t.rule.key != '\0' && t.rule.result != t.rule.key));
 
             if has_transforms && !self.is_valid_internal(work.as_slice(), false) {
-                let raw_comp = crate::bamboo_util::break_composition_slice(work.as_slice());
+                let raw_comp = crate::syllable::break_composition_slice(work.as_slice());
                 let raw_len = work
                     .as_slice()
                     .iter()
@@ -889,7 +889,7 @@ impl Engine {
             if active.is_empty() {
                 return Cow::Borrowed("");
             }
-            let (_, tail) = crate::bamboo_util::extract_last_word_with_punctuation_marks(
+            let (_, tail) = crate::syllable::extract_last_word_with_punctuation_marks(
                 active,
                 &self.input_method.keys,
             );
@@ -919,7 +919,7 @@ impl Engine {
         composition: &[Transformation],
         input_is_full_complete: bool,
     ) -> bool {
-        crate::bamboo_util::is_valid(composition, input_is_full_complete)
+        crate::syllable::is_valid(composition, input_is_full_complete)
     }
 
     /// Restores the last word in the composition to its un-transformed state.
@@ -936,7 +936,7 @@ impl Engine {
         }
 
         let (prev_slice, last) =
-            crate::bamboo_util::extract_last_word(work.as_slice(), Some(&self.input_method.keys));
+            crate::syllable::extract_last_word(work.as_slice(), Some(&self.input_method.keys));
 
         let mut previous = TransformationStack::new();
         previous.extend_from_slice(prev_slice);
@@ -947,7 +947,7 @@ impl Engine {
             return;
         }
         if !to_vietnamese {
-            previous.extend_from_slice(&crate::bamboo_util::break_composition_slice(last));
+            previous.extend_from_slice(&crate::syllable::break_composition_slice(last));
             self.set_active_from_stack(&mut previous);
             self.current_state_id = 0;
             return;
@@ -985,9 +985,9 @@ impl Engine {
         let refresh_last_tone_target = matches!(restore_mark, RestoreMark::Yes);
 
         if refresh_last_tone_target && self.active_len > 0 {
-            crate::bamboo_util::refresh_last_tone_target_into(
+            crate::syllable::refresh_last_tone_target_into(
                 &mut self.active_buffer[..self.active_len],
-                self.config.to_flags() & crate::bamboo_util::ESTD_TONE_STYLE != 0,
+                self.config.std_tone_style,
             );
         }
     }
@@ -1027,9 +1027,9 @@ impl Engine {
         self.current_state_id = 0;
 
         if self.active_len > 0 {
-            crate::bamboo_util::refresh_last_tone_target_into(
+            crate::syllable::refresh_last_tone_target_into(
                 &mut self.active_buffer[..self.active_len],
-                self.config.to_flags() & crate::bamboo_util::ESTD_TONE_STYLE != 0,
+                self.config.std_tone_style,
             );
         }
     }

@@ -3,7 +3,7 @@
 use crate::engine::{MAX_ACTIVE_TRANS, Transformation};
 use crate::input_method::{EffectType, Mark};
 use crate::mode::OutputOptions;
-use crate::utils::{add_mark_to_char, add_tone_to_char, lower, upper};
+use crate::phonetics::{add_mark_to_char, add_tone_to_char, lower, upper};
 
 /// Converts a slice of transformations into a string based on the provided options.
 pub(crate) fn flatten_slice(composition: &[Transformation], options: OutputOptions) -> String {
@@ -129,7 +129,7 @@ fn write_canvas_slice(composition: &[Transformation], options: OutputOptions, ou
             chr = add_tone_to_char(chr, 0);
         }
         if options.contains(OutputOptions::MARK_LESS) {
-            chr = crate::utils::add_mark_to_toneless_char(add_tone_to_char(chr, 0), 0);
+            chr = crate::phonetics::add_mark_to_toneless_char(add_tone_to_char(chr, 0), 0);
         }
 
         let final_chr = if options.contains(OutputOptions::LOWER_CASE) {
@@ -194,7 +194,7 @@ pub(crate) fn first_canvas_char_in_suffix(
         chr = add_tone_to_char(chr, 0);
     }
     if options.contains(OutputOptions::MARK_LESS) {
-        chr = crate::utils::add_mark_to_toneless_char(add_tone_to_char(chr, 0), 0);
+        chr = crate::phonetics::add_mark_to_toneless_char(add_tone_to_char(chr, 0), 0);
     }
     if options.contains(OutputOptions::LOWER_CASE) {
         chr = lower(chr);

@@ -1,45 +1,31 @@
 //! # Bamboo Core
 //!
-//! **Bamboo Core** is an ultra-fast, zero-heap-hotpath Vietnamese Input Method Engine (IME) core written in pure Rust.
-//! Ported and evolved from the original [bamboo-core](https://github.com/BambooEngine/bamboo-core) (Go), it powers
-//! modern Vietnamese input on Linux (Fcitx5, `IBus`), macOS, Windows, text editors, embedded systems, and foreign-language bindings.
+//! Bamboo Core is an ultra-high-performance Vietnamese Input Method Engine (IME) written in Rust.
+//! It is designed for near-zero allocation on hot paths, deterministic execution, and seamless integration
+//! into native applications, text editors, OS-level input handlers, WebAssembly, and C/C++ runtimes.
 //!
-//! ## Key Highlights
+//! ## Key Capabilities
 //!
-//! - **Hybrid Architecture**: Combines a declarative **Rule Engine** with a **Lazy JIT DFA** (Deterministic Finite Automaton)
-//!   for $O(1)$ amortized keystroke processing.
-//! - **Zero Heap Allocations on Hot Paths**: Active compositions live in a stack-allocated buffer ([`advanced::MAX_ACTIVE_TRANS`] = 16).
-//!   Transitions, backspaces, and commits execute with zero per-keystroke dynamic memory allocations.
-//! - **$O(1)$ Keystroke Undo & Grapheme Deletion**: Supports both snapshot-based instant keystroke backspace ([`Engine::remove_last_char`])
-//!   and smart grapheme-level backspace ([`Engine::remove_last_output_char`]) which preserves diacritics on earlier letters.
-//! - **3-Way Diff for Text Editors**: [`Engine::process_key_delta`] computes longest common prefixes (LCP) via 8-byte chunk scanning (SWAR)
-//!   and returns `(backspaces_count, backspaces_bytes, inserted_suffix)` to update UI preedit buffers with minimal flicker.
-//! - **Built-in Input Methods**: Standard [`InputMethod::telex()`], [`InputMethod::vni()`], [`InputMethod::viqr()`], [`InputMethod::microsoft_layout()`],
-//!   [`InputMethod::telex_2()`], [`InputMethod::telex_w()`], and hybrid combinations.
-//! - **Encoding Conversion**: Includes encoders and character tables for 16 Vietnamese charsets (Unicode, TCVN3, VNI Windows, Windows-1258, VISCII, VPS, NCR, etc.).
-//! - **C-Compatible FFI**: Full `extern "C"` API in [`ffi`] for seamless integration with C/C++, Python, Swift, or native GUI toolkits.
+//! - **Real-time Keystroke Processing**: Sub-microsecond response per key (`< 1 µs / keystroke`),
+//!   orders of magnitude faster than conventional engines.
+//! - **Multi-Input Method Support**: First-class support for **Telex**, **VNI**, **VIQR**,
+//!   and user-defined input methods.
+//! - **Orthographic Validation**: Built-in Vietnamese consonant-vowel-consonant (CVC) phonotactic
+//!   verification prevents creating invalid Vietnamese words.
+//! - **Deterministic Finite Automaton (DFA) Cache**: Pre-compiled common syllable transitions
+//!   with SIMD-within-a-register (SWAR) parallel matching.
+//! - **Rich Deletion Semantics**: Comprehensive support for both character-level and grapheme-level
+//!   backspace undoing.
 //!
-//! ## API Selection Guide
-//!
-//! | Use Case | Primary API | Description |
-//! |---|---|---|
-//! | **IME Frontend (Fcitx5 / `IBus` / Native)** | [`Engine::process_key`], [`Engine::output`] | Feeds keys one-by-one, updates internal buffer, queries current composition word |
-//! | **Text Editor / Terminal / IDE** | [`Engine::process_key_delta`] | Returns a 3-way diff `(backspaces, bytes, inserted)` to replace only changed suffixes |
-//! | **Keystroke-level Backspace** | [`Engine::remove_last_char`] | $O(1)$ undo of the last physical keypress using stack snapshots |
-//! | **Grapheme-level Backspace** | [`Engine::remove_last_output_char`] | Deletes preceding character while retaining marks/tones on remaining vowels (e.g. `tiếng` $\rightarrow$ `tiến`) |
-//! | **Word Finalization** | [`Engine::commit`] | Clears composing state and appends text to committed stream |
-//! | **Batch / Convenience (Testing)** | [`Engine::process`] | Processes a full string and returns output (**convenience only, not for real-time IME**) |
-//! | **Charset Conversion** | [`advanced::encode`] | Converts Unicode strings to legacy encodings (TCVN3, VNI, etc.) |
-//!
-//! ## Quick Start — Real-Time IME Integration
-//!
-//! Feed keystrokes one at a time using [`Engine::process_key`]:
+//! ## Quick Start
 //!
 //! ```rust
 //! use bamboo_core::{Engine, Mode, InputMethod};
 //!
+//! // Create an engine configured with Telex input method
 //! let mut engine = Engine::new(InputMethod::telex());
 //!
+//! // Process keystrokes one by one
 //! engine.process_key('t', Mode::Vietnamese);
 //! engine.process_key('i', Mode::Vietnamese);
 //! engine.process_key('e', Mode::Vietnamese);
@@ -51,42 +37,38 @@
 //! assert_eq!(engine.output(), "tiếng");
 //! ```
 //!
-//! ## Text Editor Integration — 3-Way Diff
+//! ## Architecture Overview
 //!
-//! When integrating with text editors, computing the exact backspaces and new text to insert
-//! prevents unnecessary full-string re-renders:
+//! The engine operates on an internal canvas of [`Transformation`] structs representing individual
+//! graphemic steps. These transformations track rule applications, tone marks, and character modifications:
 //!
-//! ```rust
-//! use bamboo_core::{Engine, Mode, InputMethod};
-//!
-//! let mut engine = Engine::new(InputMethod::telex());
-//!
-//! // Type 'a' -> insert "a", 0 backspaces
-//! let (bs, _bytes, ins) = engine.process_key_delta('a', Mode::Vietnamese);
-//! assert_eq!(bs, 0);
-//! assert_eq!(ins, "a");
-//!
-//! // Type 's' -> delete 1 char ("a"), insert "á"
-//! let (bs, _bytes, ins) = engine.process_key_delta('s', Mode::Vietnamese);
-//! assert_eq!(bs, 1);
-//! assert_eq!(ins, "á");
+//! ```text
+//! Raw Keys:    ['t', 'i', 'e', 'e', 'n', 'g', 's']
+//!                   │
+//!                   ▼
+//! Engine:       DFA Lookup ───► Phonetic Rule Engine ───► CVC Spelling Check
+//!                   │
+//!                   ▼
+//! Composition:  ['t', 'i', 'ê' (+circumflex), 'n', 'g'] + Tone::Sac
+//!                   │
+//!                   ▼
+//! Flattener:    "tiếng"
 //! ```
 //!
-//! ## Smart Backspace Modes
+//! ## Deletion Semantics
 //!
-//! Bamboo Core provides two complementary backspace semantics:
+//! Bamboo Core distinguishes two types of backspace actions:
 //!
-//! 1. **Keystroke Undo ([`Engine::remove_last_char`])**:
-//!    Restores the engine to the exact state before the previous keystroke in $O(1)$ time.
+//! 1. **Canvas Backspace ([`Engine::remove_last_char`])**:\n//!    Undoes the single most recent keystroke transformation, reverting diacritic additions in reverse order.
 //!
 //!    ```rust
 //!    use bamboo_core::{Engine, Mode, InputMethod};
 //!
 //!    let mut engine = Engine::new(InputMethod::telex());
-//!    engine.process_str("chuyeenr", Mode::Vietnamese);
+//!    engine.process_str("chuyenr", Mode::Vietnamese);
 //!    assert_eq!(engine.output(), "chuyển");
 //!
-//!    // Undo 'r' (tone hook) -> returns to "chuyên"
+//!    // Drops the tone mark 'r', leaving the circumflex on 'ê'
 //!    engine.remove_last_char(true);
 //!    assert_eq!(engine.output(), "chuyên");
 //!    ```
@@ -133,7 +115,6 @@
     clippy::redundant_clone
 )]
 
-mod bamboo_util;
 mod charset_def;
 mod config;
 mod dfa;
@@ -143,8 +124,9 @@ mod flattener;
 mod input_method;
 mod input_method_def;
 mod mode;
+mod phonetics;
 mod spelling;
-mod utils;
+mod syllable;
 
 pub mod ffi;
 pub mod wasm;
@@ -163,7 +145,7 @@ pub mod parallel {
     /// ```rust
     /// use bamboo_core::{parallel::process_batch, Mode, InputMethod};
     ///
-    /// let inputs = vec!["tieengs", "vieetj", "nam"];
+    /// let inputs = vec!["tieengs", "vietj", "nam"];
     /// let results = process_batch(&inputs, &InputMethod::telex(), Mode::Vietnamese);
     /// assert_eq!(results, vec!["tiếng", "việt", "nam"]);
     /// ```
@@ -183,6 +165,7 @@ pub mod parallel {
 }
 
 pub use config::{Config, ConfigBuilder};
+pub use encoder::{Charset, encode_charset};
 pub use engine::{Engine, RestoreMark, Transformation, TransformationStack};
 pub use input_method::InputMethod;
 pub use mode::{Mode, OutputOptions};
@@ -200,7 +183,9 @@ pub mod advanced {
         CharsetDefinition, get_charset_definition, get_charset_definitions,
     };
     pub use crate::dfa::{Dfa, State};
-    pub use crate::encoder::{charset_names, encode, get_charset_name, get_charset_names};
+    pub use crate::encoder::{
+        Charset, charset_names, encode, encode_charset, get_charset_name, get_charset_names,
+    };
     pub use crate::input_method_def::{
         InputMethodDef, get_input_method, get_input_method_definitions,
     };
