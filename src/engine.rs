@@ -844,10 +844,7 @@ impl Engine {
             let next_state_id =
                 self.dfa.get_state(self.current_state_id).get_transition(lower_key as u8);
             if next_state_id != 0 {
-                // Snapshot before overwriting active buffer (skip if empty — nothing to restore).
-                if self.active_len > 0 {
-                    self.push_snapshot();
-                }
+                self.push_snapshot();
                 let prev_len = self.active_len;
                 let has_prev_upper = self.active_buffer[..prev_len].iter().any(|t| t.is_upper_case);
                 let mut prev_upper = [false; MAX_ACTIVE_TRANS];
@@ -870,7 +867,7 @@ impl Engine {
                         dst.is_upper_case = is_up;
                     }
                 }
-                if is_upper_case {
+                if is_upper_case && prev_len <= self.active_len {
                     for t in &mut self.active_buffer[prev_len..self.active_len] {
                         t.is_upper_case = true;
                     }
@@ -887,9 +884,7 @@ impl Engine {
             // Snapshot before push_active so backspace can restore previous state.
             // Word breaks trigger commit() which clears snapshots — that's correct
             // (committed text can't be undone via backspace).
-            if self.active_len > 0 {
-                self.push_snapshot();
-            }
+            self.push_snapshot();
             let trans = crate::syllable::new_appending_trans(lower_key, is_upper_case);
             self.push_active(trans);
             if crate::phonetics::is_word_break_symbol(lower_key) {
