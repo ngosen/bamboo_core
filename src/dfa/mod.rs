@@ -11,7 +11,10 @@ use crate::input_method::InputMethod;
 use rustc_hash::FxHashMap;
 
 /// Maximum transitions per DFA state. Vietnamese input typically uses ~12 keys per state.
-const MAX_TRANS: usize = 24;
+const MAX_TRANS: usize = 16;
+
+/// Maximum DFA state ID that fits in `trans_states: [u16; 16]`.
+const MAX_STATE_ID: u32 = 0xFFFF;
 
 /// A compact DFA state representing a unique syllable composition.
 ///
@@ -19,43 +22,49 @@ const MAX_TRANS: usize = 24;
 /// 128-entry table. A 128-bit bitset enables $O(1)$ "has transition?" checks
 /// and fast rejection for keys that don't have transitions.
 ///
-/// Memory layout is carefully aligned (160 bytes total) so that the hot fields
-/// (bitset, keys, hash, offset, lengths) reside within the first 64-byte cache line.
+/// Memory layout is carefully aligned so that the hot fields (bitset, keys,
+/// state IDs) reside within the first 64-byte cache line. Cold fields
+/// (composition hash, arena offset, lengths) occupy the tail.
 #[repr(C)]
 #[derive(Clone, Debug)]
 pub struct State {
     /// 128-bit bitset: bit `i = 1` means key `i` has a transition (16 bytes: offset 0..16).
     pub bitset: [u64; 2],
-    /// Keys triggering transitions (24 bytes: offset 16..40).
+    /// Keys triggering transitions (16 bytes: offset 16..32).
     pub trans_keys: [u8; MAX_TRANS],
-    /// Precomputed hash of the composition for $O(1)$ equality check (8 bytes: offset 40..48).
+    /// Destination state IDs for transitions (32 bytes: offset 32..64).
+    pub trans_states: [u16; MAX_TRANS],
+    /// Precomputed hash of the composition for $O(1)$ equality check (8 bytes: offset 64..72).
     pub comp_hash: u64,
-    /// Start index in the DFA arena (4 bytes: offset 48..52).
+    /// Start index in the DFA arena (4 bytes: offset 72..76).
     pub comp_offset: u32,
-    /// Number of valid transitions (1 byte: offset 52).
+    /// Start index in the flattened-output arena (4 bytes: offset 76..80).
+    pub flat_offset: u32,
+    /// Number of valid transitions (1 byte: offset 80).
     pub trans_len: u8,
-    /// Number of transformations in this state (1 byte: offset 53).
+    /// Number of transformations in this state (1 byte: offset 81).
     pub comp_len: u8,
-    /// Explicit padding to ensure hot cache line boundary at 64 bytes.
-    pub _pad_hot: [u8; 10],
-
-    /// Destination state IDs for transitions (96 bytes: offset 64..160).
-    pub trans_states: [u32; MAX_TRANS],
+    /// Byte length of the flattened output in `flat_arena` (1 byte: offset 82).
+    pub flat_len: u8,
+    /// Explicit padding to 8-byte alignment (5 bytes: offset 83..88).
+    pub _pad: [u8; 5],
 }
 
-const _: () = assert!(std::mem::size_of::<State>() == 160);
+const _: () = assert!(std::mem::size_of::<State>() == 88);
 
 impl Default for State {
     fn default() -> Self {
         Self {
             bitset: [0; 2],
             trans_keys: [0; MAX_TRANS],
+            trans_states: [0; MAX_TRANS],
             comp_hash: 0,
             comp_offset: 0,
+            flat_offset: 0,
             trans_len: 0,
             comp_len: 0,
-            _pad_hot: [0; 10],
-            trans_states: [0; MAX_TRANS],
+            flat_len: 0,
+            _pad: [0; 5],
         }
     }
 }
@@ -98,7 +107,7 @@ impl State {
         if m0 != 0 {
             let offset = (m0.trailing_zeros() / 8) as usize;
             if offset < self.trans_len as usize {
-                return self.trans_states[offset];
+                return self.trans_states[offset] as u32;
             }
         }
 
@@ -119,29 +128,7 @@ impl State {
             if m1 != 0 {
                 let offset = 8 + (m1.trailing_zeros() / 8) as usize;
                 if offset < self.trans_len as usize {
-                    return self.trans_states[offset];
-                }
-            }
-        }
-
-        // Check chunk 2 (keys 16..24)
-        if self.trans_len > 16 {
-            let c2 = u64::from_le_bytes([
-                self.trans_keys[16],
-                self.trans_keys[17],
-                self.trans_keys[18],
-                self.trans_keys[19],
-                self.trans_keys[20],
-                self.trans_keys[21],
-                self.trans_keys[22],
-                self.trans_keys[23],
-            ]);
-            let v2 = c2 ^ broadcast;
-            let m2 = v2.wrapping_sub(0x0101010101010101) & !v2 & 0x8080808080808080;
-            if m2 != 0 {
-                let offset = 16 + (m2.trailing_zeros() / 8) as usize;
-                if offset < self.trans_len as usize {
-                    return self.trans_states[offset];
+                    return self.trans_states[offset] as u32;
                 }
             }
         }
@@ -152,25 +139,30 @@ impl State {
     /// Sets or updates a transition from this state on a given key.
     ///
     /// Updates both the 128-bit bitset and the key/state arrays.
+    /// State IDs above [`MAX_STATE_ID`] are silently dropped (transition not stored).
     ///
     /// # Arguments
     /// * `key` - The ASCII key trigger.
     /// * `state_id` - The target DFA state ID.
     #[inline]
     pub fn set_transition(&mut self, key: u8, state_id: u32) {
+        if state_id > MAX_STATE_ID {
+            return;
+        }
+        let sid = state_id as u16;
         let idx = key as usize;
         self.bitset[idx / 64] |= 1u64 << (idx % 64);
 
         let len = self.trans_len as usize;
         for i in 0..len {
             if self.trans_keys[i] == key {
-                self.trans_states[i] = state_id;
+                self.trans_states[i] = sid;
                 return;
             }
         }
         if len < MAX_TRANS {
             self.trans_keys[len] = key;
-            self.trans_states[len] = state_id;
+            self.trans_states[len] = sid;
             self.trans_len += 1;
         }
     }
@@ -186,6 +178,8 @@ pub struct Dfa {
     pub states: Vec<State>,
     /// Continuous arena storing transformation slices for all states.
     pub arena: Vec<Transformation>,
+    /// Flattened UTF-8 output cache, keyed by `State::flat_offset` / `flat_len`.
+    pub flat_arena: Vec<u8>,
     /// Maps composition hash to `state_id` for $O(1)$ deduplication and lookup.
     pub hash_to_state: FxHashMap<u64, u32>,
 }
@@ -195,6 +189,7 @@ impl Clone for Dfa {
         Self {
             states: self.states.clone(),
             arena: self.arena.clone(),
+            flat_arena: self.flat_arena.clone(),
             hash_to_state: self.hash_to_state.clone(),
         }
     }
@@ -226,6 +221,7 @@ impl Dfa {
         let mut dfa = Self {
             states: Vec::with_capacity(128),
             arena: Vec::with_capacity(512),
+            flat_arena: Vec::with_capacity(1024),
             hash_to_state: FxHashMap::default(),
         };
         dfa.states.push(State::default());
@@ -249,42 +245,86 @@ impl Dfa {
         &self.arena[start..end]
     }
 
+    /// Returns the cached flattened UTF-8 output for the specified state.
+    ///
+    /// Returns an empty slice if the state has no cached flatten (e.g. state 0).
+    pub fn get_flat(&self, state_id: u32) -> &str {
+        let state = &self.states[state_id as usize];
+        let start = state.flat_offset as usize;
+        let end = start + state.flat_len as usize;
+        std::str::from_utf8(&self.flat_arena[start..end]).unwrap_or("")
+    }
+
     /// Adds a new composition state to the DFA or returns the existing state ID if already present.
     ///
     /// Uses the precomputed hash and arena verification for fast collision-free deduplication.
+    /// On hash collision, scans backwards through earlier states sharing the same
+    /// `comp_hash` so previously inserted compositions remain reachable.
+    /// Also caches the flattened lowercase output for zero-cost preedit reconstruction.
     pub fn add_state(&mut self, composition: &[Transformation]) -> u32 {
         let hash = hash_composition(composition);
 
         // Fast path: hash match -> verify arena equality (no heap allocation).
         if let Some(&id) = self.hash_to_state.get(&hash) {
-            let existing = self.get_composition(id);
-            if existing == composition {
+            if self.get_composition(id) == composition {
                 return id;
             }
-            // Hash collision -> fall through to add new state.
+            // Hash collision: `hash_to_state` stores only the most recent state for
+            // this hash. Scan backwards so older compositions with the same hash
+            // are still found (and not duplicated).
+            for old_id in (0..id).rev() {
+                if self.states[old_id as usize].comp_hash == hash
+                    && self.get_composition(old_id) == composition
+                {
+                    return old_id;
+                }
+            }
         }
 
         let id = self.states.len() as u32;
         let comp_offset = self.arena.len() as u32;
         let comp_len = composition.len() as u8;
 
+        // Cache the flattened lowercase output for P1 fast preedit reconstruction.
+        let flat_offset = self.flat_arena.len() as u32;
+        let mut tmp = String::new();
+        crate::flattener::append_flatten_slice(
+            composition,
+            crate::mode::OutputOptions::LOWER_CASE,
+            &mut tmp,
+        );
+        self.flat_arena.extend_from_slice(tmp.as_bytes());
+        let flat_len = (self.flat_arena.len() - flat_offset as usize) as u8;
+
         self.arena.extend_from_slice(composition);
-        self.states.push(State { comp_hash: hash, comp_offset, comp_len, ..State::default() });
+        self.states.push(State {
+            comp_hash: hash,
+            comp_offset,
+            comp_len,
+            flat_offset,
+            flat_len,
+            ..State::default()
+        });
 
         self.hash_to_state.insert(hash, id);
         id
     }
 
     /// Finds the state ID corresponding to an existing composition slice, if present.
+    ///
+    /// On hash collision, falls back to a backward scan over earlier states with
+    /// the same `comp_hash` (mirrors [`Dfa::add_state`]).
     pub fn find_state(&self, composition: &[Transformation]) -> Option<u32> {
         let hash = hash_composition(composition);
         let id = *self.hash_to_state.get(&hash)?;
-        let existing = self.get_composition(id);
-        if existing == composition {
-            Some(id)
-        } else {
-            None // Hash collision with different composition.
+        if self.get_composition(id) == composition {
+            return Some(id);
         }
+        // Hash collision: scan backwards for an earlier state with the same hash.
+        (0..id).rev().find(|&old_id| {
+            self.states[old_id as usize].comp_hash == hash
+                && self.get_composition(old_id) == composition
+        })
     }
 }
 
@@ -364,5 +404,66 @@ impl<'a> DfaCompiler<'a> {
             // Link the transition
             self.dfa.states[prev_state as usize].set_transition(k as u8, current_state);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::Transformation;
+    use crate::input_method::EffectType;
+
+    fn appending(ch: char) -> Transformation {
+        Transformation::new(ch, ch, ch, None, 0, EffectType::Appending, false)
+    }
+
+    #[test]
+    fn add_state_deduplicates_identical_composition() {
+        let mut dfa = Dfa::new();
+        let comp = [appending('a'), appending('b')];
+        let id1 = dfa.add_state(&comp);
+        let id2 = dfa.add_state(&comp);
+        assert_eq!(id1, id2);
+        assert_eq!(dfa.states.len(), 2); // state 0 (empty) + one real
+    }
+
+    #[test]
+    fn find_state_roundtrip() {
+        let mut dfa = Dfa::new();
+        let comp_a = [appending('x')];
+        let comp_b = [appending('y')];
+        let id_a = dfa.add_state(&comp_a);
+        let id_b = dfa.add_state(&comp_b);
+        assert_ne!(id_a, id_b);
+        assert_eq!(dfa.find_state(&comp_a), Some(id_a));
+        assert_eq!(dfa.find_state(&comp_b), Some(id_b));
+    }
+
+    /// Regression: on hash collision, older compositions must remain reachable
+    /// via `find_state` and `add_state` must not create duplicates.
+    #[test]
+    fn hash_collision_preserves_both_states() {
+        let mut dfa = Dfa::new();
+        let comp_a = [appending('p'), appending('q')];
+        let comp_b = [appending('r'), appending('s')];
+
+        let id_a = dfa.add_state(&comp_a);
+        let id_b = dfa.add_state(&comp_b);
+        assert_ne!(id_a, id_b);
+
+        // Simulate a hash collision: force both states to share the same hash.
+        let forced_hash = 0xDEAD_BEEF_CAFE_F00D_u64;
+        dfa.states[id_a as usize].comp_hash = forced_hash;
+        dfa.states[id_b as usize].comp_hash = forced_hash;
+        dfa.hash_to_state.insert(forced_hash, id_b); // map points at newer state
+
+        // Both compositions must still be findable.
+        assert_eq!(dfa.find_state(&comp_a), Some(id_a));
+        assert_eq!(dfa.find_state(&comp_b), Some(id_b));
+
+        // Re-adding must not create duplicates.
+        assert_eq!(dfa.add_state(&comp_a), id_a);
+        assert_eq!(dfa.add_state(&comp_b), id_b);
+        assert_eq!(dfa.states.len(), 3); // state 0 + id_a + id_b, no duplicate
     }
 }

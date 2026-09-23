@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use crate::engine::EngineRules;
+use std::sync::Arc;
 use std::sync::LazyLock;
 
 pub mod preset;
@@ -8,24 +8,21 @@ pub mod rule;
 pub use preset::InputMethodPreset;
 pub use rule::{EffectType, Mark, Rule, Tone};
 
-static PRESET_TELEX_SHARED: LazyLock<(Arc<InputMethod>, Arc<EngineRules>)> =
-    LazyLock::new(|| {
-        let im = Arc::new(parse_input_method("Telex"));
-        let rules = Arc::new(EngineRules::from_input_method(&im));
-        (im, rules)
-    });
-static PRESET_VNI_SHARED: LazyLock<(Arc<InputMethod>, Arc<EngineRules>)> =
-    LazyLock::new(|| {
-        let im = Arc::new(parse_input_method("VNI"));
-        let rules = Arc::new(EngineRules::from_input_method(&im));
-        (im, rules)
-    });
-static PRESET_VIQR_SHARED: LazyLock<(Arc<InputMethod>, Arc<EngineRules>)> =
-    LazyLock::new(|| {
-        let im = Arc::new(parse_input_method("VIQR"));
-        let rules = Arc::new(EngineRules::from_input_method(&im));
-        (im, rules)
-    });
+static PRESET_TELEX_SHARED: LazyLock<(Arc<InputMethod>, Arc<EngineRules>)> = LazyLock::new(|| {
+    let im = Arc::new(parse_input_method("Telex"));
+    let rules = Arc::new(EngineRules::from_input_method(&im));
+    (im, rules)
+});
+static PRESET_VNI_SHARED: LazyLock<(Arc<InputMethod>, Arc<EngineRules>)> = LazyLock::new(|| {
+    let im = Arc::new(parse_input_method("VNI"));
+    let rules = Arc::new(EngineRules::from_input_method(&im));
+    (im, rules)
+});
+static PRESET_VIQR_SHARED: LazyLock<(Arc<InputMethod>, Arc<EngineRules>)> = LazyLock::new(|| {
+    let im = Arc::new(parse_input_method("VIQR"));
+    let rules = Arc::new(EngineRules::from_input_method(&im));
+    (im, rules)
+});
 static PRESET_MICROSOFT_SHARED: LazyLock<(Arc<InputMethod>, Arc<EngineRules>)> =
     LazyLock::new(|| {
         let im = Arc::new(parse_input_method("Microsoft layout"));
@@ -99,8 +96,8 @@ pub(crate) fn find_preset_shared(im: &InputMethod) -> Option<(Arc<InputMethod>, 
 }
 
 pub mod definitions;
-pub use definitions::InputMethodDef;
 use crate::phonetics::{add_mark_to_toneless_char, add_tone_to_char, is_vowel};
+pub use definitions::InputMethodDef;
 
 use rule::TONES;
 
@@ -581,10 +578,15 @@ mod tests {
         assert_eq!("telex".parse::<InputMethodPreset>().unwrap(), InputMethodPreset::Telex);
         assert_eq!("VNI".parse::<InputMethodPreset>().unwrap(), InputMethodPreset::Vni);
         assert_eq!("viqr".parse::<InputMethodPreset>().unwrap(), InputMethodPreset::Viqr);
-        assert_eq!("microsoft layout".parse::<InputMethodPreset>().unwrap(), InputMethodPreset::MicrosoftLayout);
+        assert_eq!(
+            "microsoft layout".parse::<InputMethodPreset>().unwrap(),
+            InputMethodPreset::MicrosoftLayout
+        );
         assert_eq!("telex 2".parse::<InputMethodPreset>().unwrap(), InputMethodPreset::Telex2);
-        assert_eq!("telex + vni".parse::<InputMethodPreset>().unwrap(), InputMethodPreset::TelexVni);
+        assert_eq!(
+            "telex + vni".parse::<InputMethodPreset>().unwrap(),
+            InputMethodPreset::TelexVni
+        );
         assert_eq!("telex w".parse::<InputMethodPreset>().unwrap(), InputMethodPreset::TelexW);
     }
 }
-

@@ -8,7 +8,7 @@ use std::borrow::Cow;
 use crate::config::Config;
 use crate::input_method::{EffectType, InputMethod, Mark, Rule};
 use crate::mode::{Mode, OutputOptions};
-use crate::phonetics::{is_upper, lower};
+use crate::phonetics::{is_upper, lower, upper};
 
 pub mod restore;
 pub mod rules;
@@ -16,8 +16,7 @@ pub mod snapshot;
 pub mod state;
 
 pub use rules::EngineRules;
-use snapshot::Snapshot;
-use state::uoh_tail_match;
+use snapshot::{FLAG_ENGLISH_BYPASS, FLAG_NEEDS_BUFFER, Snapshot};
 pub use state::{MAX_ACTIVE_TRANS, RestoreMark, Transformation, TransformationStack};
 
 /// The main stateful processor of the Vietnamese Input Method Engine.
@@ -47,9 +46,12 @@ pub struct Engine {
     dfa: crate::dfa::Dfa,
     current_state_id: u32,
 
-    /// Snapshot stack for O(1) backspace — all stack-allocated, zero heap.
+    /// Snapshot stack for O(1) backspace — 8-byte metadata per slot, zero heap.
     snapshots: [Snapshot; MAX_ACTIVE_TRANS],
     snapshot_len: usize,
+    /// Lazily-allocated side buffer for snapshots whose composition is not in
+    /// the DFA (English bypass / fallback). Only written when needed.
+    bypass_buffers: Option<Box<[[Transformation; MAX_ACTIVE_TRANS]; MAX_ACTIVE_TRANS]>>,
 
     /// Lazily-initialized scratch engine for `restore_last_word` to avoid repeated `with_config`.
     pub(crate) scratch_engine: Option<Box<Engine>>,
@@ -106,13 +108,9 @@ impl Engine {
             dfa: crate::dfa::Dfa::new(),
             current_state_id: 0,
 
-            snapshots: [Snapshot {
-                active_buffer: [Transformation::default(); MAX_ACTIVE_TRANS],
-                active_len: 0,
-                current_state_id: 0,
-                english_bypass: false,
-            }; MAX_ACTIVE_TRANS],
+            snapshots: [Snapshot::default(); MAX_ACTIVE_TRANS],
             snapshot_len: 0,
+            bypass_buffers: None,
             scratch_engine: None,
             english_bypass: false,
         }
@@ -132,31 +130,58 @@ impl Engine {
     #[inline]
     fn update_cached_output(&mut self) {
         self.cached_output.clear();
-        if self.active_len > 0 {
-            crate::flattener::append_flatten_slice(
-                &self.active_buffer[..self.active_len],
-                OutputOptions::NONE,
-                &mut self.cached_output,
-            );
+        if self.active_len == 0 {
+            return;
         }
+        // P1 fast path: reuse cached lowercase flatten from DFA state and
+        // re-apply case bits — avoids full effect-chain + PHF resolution.
+        if self.current_state_id != 0 {
+            let flat = self.dfa.get_flat(self.current_state_id);
+            if !flat.is_empty() {
+                let mut flat_chars = flat.chars();
+                for t in &self.active_buffer[..self.active_len] {
+                    if t.effect_type == EffectType::Appending
+                        && t.key != '\0'
+                        && let Some(c) = flat_chars.next()
+                    {
+                        self.cached_output.push(if t.is_upper_case { upper(c) } else { c });
+                    }
+                }
+                return;
+            }
+        }
+        // Slow path: full flatten with effect-chain resolution.
+        crate::flattener::append_flatten_slice(
+            &self.active_buffer[..self.active_len],
+            OutputOptions::NONE,
+            &mut self.cached_output,
+        );
     }
 
     pub(crate) fn set_active_from_stack(&mut self, src: &mut TransformationStack) {
         self.active_len = src.len().min(MAX_ACTIVE_TRANS);
         self.active_buffer[..self.active_len].copy_from_slice(src.as_slice());
         src.clear();
-        self.update_cached_output();
     }
 
     #[inline]
     fn push_snapshot(&mut self) {
         if self.snapshot_len < MAX_ACTIVE_TRANS {
+            let needs_buffer = self.english_bypass || self.current_state_id == 0;
             let snap = &mut self.snapshots[self.snapshot_len];
-            snap.active_buffer[..self.active_len]
-                .copy_from_slice(&self.active_buffer[..self.active_len]);
-            snap.active_len = self.active_len;
-            snap.current_state_id = self.current_state_id;
-            snap.english_bypass = self.english_bypass;
+            snap.state_id = self.current_state_id;
+            snap.active_len = self.active_len as u8;
+            snap.upper_mask = (0..self.active_len).fold(0u16, |m, i| {
+                if self.active_buffer[i].is_upper_case { m | (1u16 << i) } else { m }
+            });
+            snap.flags = if self.english_bypass { FLAG_ENGLISH_BYPASS } else { 0 }
+                | if needs_buffer { FLAG_NEEDS_BUFFER } else { 0 };
+            if needs_buffer {
+                let bufs = self.bypass_buffers.get_or_insert_with(|| {
+                    Box::new([[Transformation::default(); MAX_ACTIVE_TRANS]; MAX_ACTIVE_TRANS])
+                });
+                bufs[self.snapshot_len] = self.active_buffer;
+            }
             self.snapshot_len += 1;
         }
     }
@@ -168,11 +193,25 @@ impl Engine {
         }
         self.snapshot_len -= 1;
         let snap = &self.snapshots[self.snapshot_len];
-        self.active_len = snap.active_len;
-        self.active_buffer[..self.active_len]
-            .copy_from_slice(&snap.active_buffer[..self.active_len]);
-        self.current_state_id = snap.current_state_id;
-        self.english_bypass = snap.english_bypass;
+        self.current_state_id = snap.state_id;
+        self.english_bypass = snap.flags & FLAG_ENGLISH_BYPASS != 0;
+        if snap.flags & FLAG_NEEDS_BUFFER != 0 {
+            if let Some(bufs) = &self.bypass_buffers {
+                self.active_buffer = bufs[self.snapshot_len];
+            }
+            self.active_len = snap.active_len as usize;
+        } else if snap.state_id != 0 {
+            // Restore from DFA arena + re-apply case bits.
+            let comp = self.dfa.get_composition(snap.state_id);
+            let len = comp.len().min(MAX_ACTIVE_TRANS);
+            self.active_buffer[..len].copy_from_slice(comp);
+            self.active_len = len;
+            for (i, t) in self.active_buffer[..len].iter_mut().enumerate() {
+                t.is_upper_case = (snap.upper_mask >> i) & 1 != 0;
+            }
+        } else {
+            self.active_len = snap.active_len as usize;
+        }
         Some(())
     }
 
@@ -247,11 +286,12 @@ impl Engine {
         is_upper_case: bool,
     ) -> bool {
         let lower_key = lower(key);
+        let rules = self.get_applicable_rules(lower_key);
         let mut trans_buf = TransformationStack::new();
 
         crate::syllable::generate_transformations(
             composition.as_slice(),
-            self.get_applicable_rules(lower_key),
+            rules,
             self.config,
             lower_key,
             is_upper_case,
@@ -260,7 +300,7 @@ impl Engine {
 
         if trans_buf.is_empty() {
             crate::syllable::generate_fallback_transformations(
-                self.get_applicable_rules(lower_key),
+                rules,
                 lower_key,
                 is_upper_case,
                 &mut trans_buf,
@@ -273,21 +313,17 @@ impl Engine {
                 tmp_data[..composition.len()].copy_from_slice(composition.as_slice());
                 tmp_data[composition.len()..combined_len].copy_from_slice(trans_buf.as_slice());
 
-                if !self.input_method.super_keys.is_empty() {
-                    let current_str = crate::flattener::flatten_slice(
+                if !self.input_method.super_keys.is_empty()
+                    && crate::syllable::uho_tail_match_composition(&tmp_data[..combined_len])
+                {
+                    let (target, rule) = crate::syllable::find_target(
                         &tmp_data[..combined_len],
-                        OutputOptions::TONE_LESS | OutputOptions::LOWER_CASE,
+                        self.get_applicable_rules(self.input_method.super_keys[0]),
+                        self.config,
                     );
-                    if uoh_tail_match(&current_str) {
-                        let (target, rule) = crate::syllable::find_target(
-                            &tmp_data[..combined_len],
-                            self.get_applicable_rules(self.input_method.super_keys[0]),
-                            self.config,
-                        );
-                        if let (Some(target), Some(mut rule)) = (target, rule) {
-                            rule.key = '\0';
-                            trans_buf.push(Transformation::from_rule(rule, Some(target), false));
-                        }
+                    if let (Some(target), Some(mut rule)) = (target, rule) {
+                        rule.key = '\0';
+                        trans_buf.push(Transformation::from_rule(rule, Some(target), false));
                     }
                 }
             }
@@ -563,25 +599,20 @@ impl Engine {
             if next_state_id != 0 {
                 self.push_snapshot();
                 let prev_len = self.active_len;
-                let has_prev_upper = self.active_buffer[..prev_len].iter().any(|t| t.is_upper_case);
-                let mut prev_upper = [false; MAX_ACTIVE_TRANS];
-                if has_prev_upper {
-                    for (dst, src) in prev_upper.iter_mut().zip(&self.active_buffer[..prev_len]) {
-                        *dst = src.is_upper_case;
-                    }
-                }
+                // Pack case bits into a u16 mask: bit i = active_buffer[i].is_upper_case.
+                // Single load + single compare for the common all-lowercase case.
+                let prev_upper: u16 = (0..prev_len).fold(0u16, |m, i| {
+                    if self.active_buffer[i].is_upper_case { m | (1u16 << i) } else { m }
+                });
 
                 self.current_state_id = next_state_id;
                 let comp = self.dfa.get_composition(next_state_id);
                 self.active_len = comp.len().min(MAX_ACTIVE_TRANS);
                 self.active_buffer[..self.active_len].copy_from_slice(comp);
 
-                if has_prev_upper {
-                    for (dst, &is_up) in self.active_buffer[..prev_len.min(self.active_len)]
-                        .iter_mut()
-                        .zip(&prev_upper)
-                    {
-                        dst.is_upper_case = is_up;
+                if prev_upper != 0 {
+                    for i in 0..prev_len.min(self.active_len) {
+                        self.active_buffer[i].is_upper_case = (prev_upper >> i) & 1 != 0;
                     }
                 }
                 if is_upper_case && prev_len <= self.active_len {
@@ -684,7 +715,6 @@ impl Engine {
         self.active_buffer[self.active_len] = trans;
         self.active_len += 1;
         self.current_state_id = self.dfa.find_state(self.active_slice()).unwrap_or(0);
-        self.update_cached_output();
     }
 
     /// Clears the active syllable buffer and appends it to the committed text.

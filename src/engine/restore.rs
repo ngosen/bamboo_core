@@ -14,6 +14,7 @@ impl Engine {
         if work.is_empty() {
             self.set_active_from_stack(&mut work);
             self.current_state_id = 0;
+            self.update_cached_output();
             return;
         }
 
@@ -26,12 +27,14 @@ impl Engine {
         if last.is_empty() {
             self.set_active_from_stack(&mut work);
             self.current_state_id = 0;
+            self.update_cached_output();
             return;
         }
         if !to_vietnamese {
             previous.extend_from_slice(&crate::syllable::break_composition_slice(last));
             self.set_active_from_stack(&mut previous);
             self.current_state_id = 0;
+            self.update_cached_output();
             return;
         }
 
@@ -58,5 +61,6 @@ impl Engine {
 
         self.set_active_from_stack(&mut previous);
         self.current_state_id = 0;
+        self.update_cached_output();
     }
 }

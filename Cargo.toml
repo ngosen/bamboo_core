@@ -63,10 +63,17 @@ name = "vi_bench"
 harness = false
 test = false
 
+[[bench]]
+name = "criterion_bench"
+harness = false
+test = false
+
 [dev-dependencies]
+criterion = { version = "0.8.2", features = ["html_reports"] }
 proptest = "1.11.0"
-skey-engine = "0.1.4"
-uvie = "2.1.1"
+serial_test = "4.0.1"
+skey-engine = "0.1.23"
+uvie = "2.7.0"
 vi = "0.8.0"
 
 [profile.release]

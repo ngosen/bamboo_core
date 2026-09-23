@@ -1,9 +1,21 @@
 //! Vietnamese spelling validation logic based on CVC (Consonant-Vowel-Consonant) structure.
 
-use crate::phonetics::add_mark_to_toneless_char;
-
 // Static token representation: (chars, length)
 type Token = ([char; 4], u8);
+
+/// Strips diacritic marks from a character (mark 0 = canonical base).
+/// Used in the innermost token-match loop — must be faster than a PHF lookup.
+#[inline(always)]
+const fn strip_mark(c: char) -> char {
+    match c {
+        'ă' | 'â' => 'a',
+        'ê' => 'e',
+        'ô' | 'ơ' => 'o',
+        'ư' => 'u',
+        'đ' => 'd',
+        _ => c,
+    }
+}
 
 // Manual definition for now to ensure it compiles and is fast.
 // In a real scenario, we might use a build script or a more sophisticated const-fn.
@@ -167,8 +179,7 @@ fn lookup_mask_optimized(
                     continue;
                 }
                 let tc0 = t_chars[0];
-                let is_match =
-                    ic0 == tc0 || (!input_is_complete && add_mark_to_toneless_char(tc0, 0) == ic0);
+                let is_match = ic0 == tc0 || (!input_is_complete && strip_mark(tc0) == ic0);
                 if is_match {
                     ret |= 1u16 << index;
                     break;
@@ -188,10 +199,8 @@ fn lookup_mask_optimized(
                 }
                 let tc0 = t_chars[0];
                 let tc1 = t_chars[1];
-                let m0 =
-                    ic0 == tc0 || (!input_is_complete && add_mark_to_toneless_char(tc0, 0) == ic0);
-                let m1 =
-                    ic1 == tc1 || (!input_is_complete && add_mark_to_toneless_char(tc1, 0) == ic1);
+                let m0 = ic0 == tc0 || (!input_is_complete && strip_mark(tc0) == ic0);
+                let m1 = ic1 == tc1 || (!input_is_complete && strip_mark(tc1) == ic1);
                 if m0 && m1 {
                     ret |= 1u16 << index;
                     break;
@@ -207,9 +216,10 @@ fn lookup_mask_optimized(
                 continue;
             }
 
-            let is_match = input.iter().zip(t_chars.iter()).all(|(&ic, &tc)| {
-                ic == tc || (!input_is_complete && add_mark_to_toneless_char(tc, 0) == ic)
-            });
+            let is_match = input
+                .iter()
+                .zip(t_chars.iter())
+                .all(|(&ic, &tc)| ic == tc || (!input_is_complete && strip_mark(tc) == ic));
 
             if is_match {
                 ret |= 1u16 << index;

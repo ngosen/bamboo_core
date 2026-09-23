@@ -1,15 +1,14 @@
 //! Internal utility functions for Vietnamese syllable analysis and transformation generation.
 
+use crate::config::Config;
 use crate::engine::{MAX_ACTIVE_TRANS, Transformation, TransformationStack};
 use crate::flattener::flatten_slice;
 use crate::input_method::{EffectType, Mark, Rule, Tone};
 use crate::mode::OutputOptions;
-use crate::spelling::{is_valid_cvc, is_valid_cvc_chars};
-use crate::config::Config;
 use crate::phonetics::{
     add_mark_to_char, add_tone_to_char, is_alpha, is_space, is_upper, is_vowel, lower,
 };
-
+use crate::spelling::{is_valid_cvc, is_valid_cvc_chars};
 
 fn in_key_list(keys: Option<&[char]>, key: char) -> bool {
     keys.is_some_and(|ks| ks.contains(&key))
@@ -97,13 +96,13 @@ pub(crate) fn is_valid(composition: &[Transformation], input_is_full_complete: b
     }
 
     // last tone checking
-    for trans in composition.iter().rev() {
-        if trans.effect_type == EffectType::ToneTransformation {
-            let last_tone = trans.tone();
-            if !has_valid_tone(composition, last_tone) {
-                return false;
-            }
-            break;
+    if let Some(trans) =
+        composition.iter().rev().find(|t| t.effect_type == EffectType::ToneTransformation)
+    {
+        let last_tone = trans.tone();
+        let cvc = extract_cvc_trans(composition);
+        if !has_valid_tone(composition, &cvc, last_tone) {
+            return false;
         }
     }
 
@@ -217,12 +216,11 @@ impl Cvc {
     }
 }
 
-fn find_tone_target(composition: &[Transformation], std_style: bool) -> Option<u8> {
+fn find_tone_target(composition: &[Transformation], cvc: &Cvc, std_style: bool) -> Option<u8> {
     if composition.is_empty() {
         return None;
     }
 
-    let cvc = extract_cvc_trans(composition);
     let vowels = cvc.vo_slice();
     let lc = cvc.lc_slice();
 
@@ -308,15 +306,13 @@ fn find_tone_target(composition: &[Transformation], std_style: bool) -> Option<u
     None
 }
 
-fn has_valid_tone(composition: &[Transformation], tone: Tone) -> bool {
+fn has_valid_tone(composition: &[Transformation], cvc: &Cvc, tone: Tone) -> bool {
     if matches!(tone, Tone::None | Tone::Acute | Tone::Dot) {
         return true;
     }
     if composition.is_empty() {
         return true;
     }
-
-    let cvc = extract_cvc_trans(composition);
     if cvc.lc_len == 0 {
         return true;
     }
@@ -380,12 +376,15 @@ fn extract_cvc_appending_indices<'a>(
 
     let mut fc_final = fc;
     let mut vo_final = vo;
+    // `results[i]` is parallel to `app_indices[i]` (app_indices-space).
+    // `fc`/`vo` are slices of `app_indices` (absolute composition indices),
+    // so lookups into `results` must use positions 0..app_len, not absolute indices.
     if (fc.len() == 1
         && vo.len() > 1
-        && (lc.is_empty() || (fc.len() + 1 < results.len() && results[fc.len() + 1] != 'e'))
+        && (lc.is_empty() || (fc.len() + 1 < app_indices.len() && results[fc.len() + 1] != 'e'))
         && results[fc.len()] == 'i'
-        && results[fc[0]] == 'g')
-        || (fc.len() == 1 && !vo.is_empty() && results[fc[0]] == 'q' && results[vo[0]] == 'u')
+        && results[0] == 'g')
+        || (fc.len() == 1 && !vo.is_empty() && results[0] == 'q' && results[fc.len()] == 'u')
     {
         fc_final = &app_indices[..fc.len() + 1];
         vo_final = &vo[1..];
@@ -564,33 +563,33 @@ fn find_mark_target_excluding(
     rules: &[Rule],
     exclude_target: Option<u8>,
 ) -> (Option<u8>, Option<Rule>) {
+    let mut tmp = [Transformation::default(); MAX_ACTIVE_TRANS];
     for (idx, trans) in composition.iter().enumerate().rev() {
         for rule in rules {
-            if rule.effect_type != EffectType::MarkTransformation {
+            if rule.effect_type != EffectType::MarkTransformation || rule.effect == 0 {
                 continue;
             }
-            if trans.result == rule.effect_on && rule.effect > 0 {
-                let target = find_root_target(composition, idx as u8);
-                if Some(target) == exclude_target {
-                    continue;
-                }
+            if trans.result != rule.effect_on {
+                continue;
+            }
+            let target = find_root_target(composition, idx as u8);
+            if Some(target) == exclude_target {
+                continue;
+            }
+            if !is_effective(composition, target as usize, rule) {
+                continue;
+            }
 
-                if !is_effective(composition, target as usize, rule) {
-                    continue;
-                }
+            let base_len = composition.len();
+            if base_len >= MAX_ACTIVE_TRANS {
+                continue;
+            }
+            let tmp_len = base_len + 1;
+            tmp[..base_len].copy_from_slice(composition);
+            tmp[base_len] = Transformation::from_rule(*rule, Some(target), false);
 
-                let mut tmp = [Transformation::default(); MAX_ACTIVE_TRANS];
-                let base_len = composition.len();
-                if base_len >= MAX_ACTIVE_TRANS {
-                    continue;
-                }
-                let tmp_len = base_len + 1;
-                tmp[..base_len].copy_from_slice(composition);
-                tmp[base_len] = Transformation::from_rule(*rule, Some(target), false);
-
-                if rule.get_mark() == Mark::Dash || is_valid(&tmp[..tmp_len], false) {
-                    return (Some(target), Some(*rule));
-                }
+            if rule.get_mark() == Mark::Dash || is_valid(&tmp[..tmp_len], false) {
+                return (Some(target), Some(*rule));
             }
         }
     }
@@ -614,6 +613,7 @@ pub(crate) fn find_target_excluding(
     config: Config,
     exclude_target: Option<u8>,
 ) -> (Option<u8>, Option<Rule>) {
+    let cvc = extract_cvc_trans(composition);
     for applicable_rule in applicable_rules {
         if applicable_rule.effect_type != EffectType::ToneTransformation {
             continue;
@@ -622,8 +622,8 @@ pub(crate) fn find_target_excluding(
         let mut target: Option<u8> = None;
         if config.free_tone_marking {
             let tone = applicable_rule.get_tone();
-            if has_valid_tone(composition, tone) {
-                target = find_tone_target(composition, config.std_tone_style);
+            if has_valid_tone(composition, &cvc, tone) {
+                target = find_tone_target(composition, &cvc, config.std_tone_style);
             }
         } else if let Some((idx, last_appending)) = find_last_appending_entry(composition)
             && is_vowel(last_appending.effect_on)
@@ -662,13 +662,14 @@ fn generate_undo_transformations(
     config: Config,
     out: &mut TransformationStack,
 ) {
+    let cvc = extract_cvc_trans(composition);
     for rule in rules {
         if rule.effect_type == EffectType::ToneTransformation {
             let mut target: Option<u8> = None;
             if config.free_tone_marking {
                 let tone = rule.get_tone();
-                if has_valid_tone(composition, tone) {
-                    target = find_tone_target(composition, config.std_tone_style);
+                if has_valid_tone(composition, &cvc, tone) {
+                    target = find_tone_target(composition, &cvc, config.std_tone_style);
                 }
             } else if let Some((idx, last_appending)) = find_last_appending_entry(composition)
                 && is_vowel(last_appending.effect_on)
@@ -730,6 +731,62 @@ fn generate_undo_transformations(
     }
 }
 
+/// Checks if composition contains "uơ" or "ưo" pattern followed by an alphabetic
+/// char — a stack-only replacement for `flatten_slice` + `uoh_tail_match`
+/// that avoids heap allocation on the super-key fallback path.
+pub(crate) fn uho_tail_match_composition(composition: &[Transformation]) -> bool {
+    // Resolve effect chains in a single O(n) pass: start with appending `result`
+    // chars, then overlay mark/tone effects from targeted transforms.
+    let mut chars = ['\0'; MAX_ACTIVE_TRANS];
+    let mut is_app = [false; MAX_ACTIVE_TRANS];
+    let mut len = 0;
+    for t in composition {
+        if !t.has_target() && t.effect_type == EffectType::Appending && t.key != '\0' {
+            chars[len] = t.result;
+            is_app[len] = true;
+            len += 1;
+        }
+    }
+    // Map: composition index -> slot in chars[] for appending transforms.
+    let mut slot_of = [usize::MAX; MAX_ACTIVE_TRANS];
+    let mut slot = 0;
+    for (ci, t) in composition.iter().enumerate() {
+        if !t.has_target() && t.effect_type == EffectType::Appending && t.key != '\0' {
+            slot_of[ci] = slot;
+            slot += 1;
+        }
+    }
+    for t in composition {
+        if let Some(target) = t.target()
+            && (target as usize) < MAX_ACTIVE_TRANS
+            && slot_of[target as usize] != usize::MAX
+        {
+            let s = slot_of[target as usize];
+            match t.effect_type {
+                EffectType::MarkTransformation => {
+                    chars[s] = add_mark_to_char(chars[s], t.effect);
+                }
+                EffectType::ToneTransformation => {
+                    chars[s] = add_tone_to_char(chars[s], t.effect);
+                }
+                _ => {}
+            }
+        }
+    }
+    // Normalize to toneless lowercase for pattern matching.
+    for c in chars.iter_mut().take(len) {
+        *c = lower(add_tone_to_char(*c, 0));
+    }
+    for i in 0..len.saturating_sub(1) {
+        let (c1, c2) = (chars[i], chars[i + 1]);
+        let is_pattern = (c1 == 'u' && c2 == 'ơ') || (c1 == 'ư' && c2 == 'o');
+        if is_pattern && i + 2 < len && chars[i + 2].is_alphabetic() {
+            return true;
+        }
+    }
+    false
+}
+
 /// Checks if composition contains "ưo" or "ươ" pattern directly from transformations,
 /// avoiding the expensive flatten + string search allocation.
 fn contains_uho_in_composition(composition: &[Transformation]) -> bool {
@@ -743,10 +800,7 @@ fn contains_uho_in_composition(composition: &[Transformation]) -> bool {
         if c == 'ư' {
             // Look ahead for 'o' or 'ơ'.
             for t2 in composition.iter().skip(i + 1) {
-                if t2.has_target()
-                    || t2.effect_type != EffectType::Appending
-                    || t2.key == '\0'
-                {
+                if t2.has_target() || t2.effect_type != EffectType::Appending || t2.key == '\0' {
                     continue;
                 }
                 let c2 = add_tone_to_char(t2.result, 0);
@@ -785,7 +839,8 @@ pub(crate) fn generate_transformations(
         ));
     }
 
-    if let (Some(target), Some(applicable_rule)) = find_target(composition, applicable_rules, config)
+    if let (Some(target), Some(applicable_rule)) =
+        find_target(composition, applicable_rules, config)
     {
         out.push(Transformation::from_rule(applicable_rule, Some(target), is_upper_case));
 
@@ -901,8 +956,7 @@ pub(crate) fn generate_transformations(
         generate_undo_transformations(composition, applicable_rules, config, out);
         if !out.is_empty() {
             let has_raw_cancel = out.as_slice().iter().any(|t| {
-                t.effect_type == EffectType::MarkTransformation
-                    && t.effect == Mark::Raw as u8
+                t.effect_type == EffectType::MarkTransformation && t.effect == Mark::Raw as u8
             });
             if !has_raw_cancel {
                 out.push(new_appending_trans(lower_key, is_upper_case));
@@ -967,15 +1021,13 @@ pub(crate) fn refresh_last_tone_target_into(composition: &mut [Transformation], 
             return;
         }
 
-        let new_tone_target = find_tone_target(composition, std_style);
+        let new_tone_target = find_tone_target(composition, &cvc, std_style);
 
         let last_tone_idx = composition
             .iter()
             .enumerate()
             .rev()
-            .find(|(_, t)| {
-                t.effect_type == EffectType::ToneTransformation && t.has_target()
-            })
+            .find(|(_, t)| t.effect_type == EffectType::ToneTransformation && t.has_target())
             .map(|(i, _)| i);
 
         (new_tone_target, last_tone_idx)
@@ -996,4 +1048,71 @@ pub(crate) fn refresh_last_tone_target_into(composition: &mut [Transformation], 
     }
 
     composition[last_idx].set_target(new_tone_target);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn appending(ch: char) -> Transformation {
+        new_appending_trans(ch, false)
+    }
+
+    fn mark_trans(target: u8) -> Transformation {
+        Transformation::new(
+            '\0',
+            '\0',
+            '\0',
+            Some(target),
+            Mark::Horn as u8,
+            EffectType::MarkTransformation,
+            false,
+        )
+    }
+
+    /// Regression: `results[fc[0]]` / `results[vo[0]]` indexed `results[]` by
+    /// absolute composition index instead of app_indices-space. Wrong whenever a
+    /// non-appending transform precedes the first appending one.
+    #[test]
+    fn extract_cvc_appending_indices_with_leading_mark() {
+        // Composition: [mark(target=1), g, i, a]
+        //   app_indices = [1, 2, 3]  (absolute positions of appending transforms)
+        //   results     = ['g', 'i', 'a']
+        // Onset-split must read results[0]=='g' and results[1]=='i', not
+        // results[1]=='i' / results[2]=='a' (the old absolute-index bug).
+        let comp = [mark_trans(1), appending('g'), appending('i'), appending('a')];
+        let app_indices: Vec<usize> = (0..comp.len()).filter(|&i| !comp[i].has_target()).collect();
+        let (fc, vo, lc) = extract_cvc_appending_indices(&comp, &app_indices);
+
+        // 'g' + 'i' + 'a': onset-split should absorb 'i' into onset ('gi'),
+        // leaving 'a' as the vowel and nothing as the coda.
+        assert_eq!(fc.len(), 2, "onset should be 'g'+'i' (absorbed by qi/gi rule)");
+        assert_eq!(vo.len(), 1, "vowel should be 'a'");
+        assert_eq!(lc.len(), 0);
+    }
+
+    #[test]
+    fn extract_cvc_appending_indices_qu_onset() {
+        // Composition: [mark(target=1), q, u, a]
+        let comp = [mark_trans(1), appending('q'), appending('u'), appending('a')];
+        let app_indices: Vec<usize> = (0..comp.len()).filter(|&i| !comp[i].has_target()).collect();
+        let (fc, vo, lc) = extract_cvc_appending_indices(&comp, &app_indices);
+
+        assert_eq!(fc.len(), 2, "onset should be 'q'+'u' (absorbed by qu rule)");
+        assert_eq!(vo.len(), 1, "vowel should be 'a'");
+        assert_eq!(lc.len(), 0);
+    }
+
+    #[test]
+    fn extract_cvc_appending_indices_plain_no_leading_transform() {
+        // Without a leading non-appending transform the old code also worked
+        // (fc[0]==0 == app_indices[0]==0). Guard against regression.
+        let comp = [appending('g'), appending('i'), appending('a')];
+        let app_indices: Vec<usize> = (0..comp.len()).filter(|&i| !comp[i].has_target()).collect();
+        let (fc, vo, lc) = extract_cvc_appending_indices(&comp, &app_indices);
+
+        assert_eq!(fc.len(), 2);
+        assert_eq!(vo.len(), 1);
+        assert_eq!(lc.len(), 0);
+    }
 }

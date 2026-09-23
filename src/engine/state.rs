@@ -219,12 +219,3 @@ impl TransformationStack {
         }
     }
 }
-
-#[inline]
-pub(crate) fn uoh_tail_match(s: &str) -> bool {
-    ["uơ", "ưo"].iter().any(|pat| {
-        s.find(pat).is_some_and(|idx| {
-            s[idx + pat.len()..].chars().next().is_some_and(|c| c.is_alphabetic())
-        })
-    })
-}

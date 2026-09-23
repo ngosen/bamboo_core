@@ -4,6 +4,7 @@
 //! and managing diacritic marks using optimized lookup tables.
 
 use phf::{Map, phf_map};
+use std::sync::LazyLock;
 
 /// A list of all Vietnamese vowels with their various tone marks.
 pub const VOWELS: &[char] = &[
@@ -213,13 +214,47 @@ pub fn add_mark_to_toneless_char(c: char, mark: u8) -> char {
         .unwrap_or(c)
 }
 
-/// Adds a diacritic mark to a character while preserving its current tone mark.
-#[inline]
-pub fn add_mark_to_char(c: char, mark: u8) -> char {
+/// Slow reference implementation used only to build [`MARK_TABLE`].
+/// Performs the original multi-step PHF lookup chain.
+fn add_mark_to_char_slow(c: char, mark: u8) -> char {
     let tone = find_tone_from_char(c);
     let base = add_tone_to_char(c, 0);
     let marked = add_mark_to_toneless_char(base, mark);
     add_tone_to_char(marked, tone)
+}
+
+/// Dense precomputed table: `MARK_TABLE[vowel_index][mark]` → resulting char.
+/// Indexed by position in [`VOWELS`] (0..72) and mark (0..4).
+/// Eliminates 4 PHF lookups per `add_mark_to_char` call down to 1–2 array loads.
+static MARK_TABLE: LazyLock<[[char; 5]; 72]> = LazyLock::new(|| {
+    let mut table = [['\0'; 5]; 72];
+    for pos in 0..72 {
+        for mark in 0..5u8 {
+            table[pos][mark as usize] = add_mark_to_char_slow(VOWELS[pos], mark);
+        }
+    }
+    table
+});
+
+/// Adds a diacritic mark to a character while preserving its current tone mark.
+///
+/// `mark = 0` strips the diacritic (maps to the plain base), **not** identity
+/// for characters that carry a mark (ă, â, ê, ô, ơ, ư, đ).
+///
+/// Optimized with a dense lookup table — only 1–2 array loads for vowels
+/// (down from 4 PHF lookups in the reference implementation).
+#[inline]
+pub fn add_mark_to_char(c: char, mark: u8) -> char {
+    if c.is_ascii() {
+        if let Some(pos) = find_vowel_position(c) {
+            return MARK_TABLE[pos][mark as usize];
+        }
+        return add_mark_to_toneless_char(c, mark);
+    }
+    if let Some(pos) = find_vowel_position(c) {
+        return MARK_TABLE[pos][mark as usize];
+    }
+    add_mark_to_toneless_char(c, mark)
 }
 
 /// Returns true if the character is a Vietnamese vowel with a tone mark
@@ -254,4 +289,31 @@ pub fn has_any_vietnamese_vowel(word: &str) -> bool {
     }
     // Slow path: only non-ASCII chars can have Vietnamese vowels.
     word.chars().any(|c| !c.is_ascii() && is_vowel(c.to_lowercase().next().unwrap_or(c)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verify the dense `MARK_TABLE` matches the reference PHF chain for
+    /// every vowel (72) × every mark (0..5).
+    #[test]
+    fn mark_table_matches_slow_reference() {
+        for (pos, &c) in VOWELS.iter().enumerate() {
+            for mark in 0..5u8 {
+                let fast = add_mark_to_char(c, mark);
+                let slow = add_mark_to_char_slow(c, mark);
+                assert_eq!(
+                    fast, slow,
+                    "MARK_TABLE mismatch at VOWELS[{pos}]='{c}' mark={mark}: fast={fast:?} slow={slow:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn add_mark_to_char_consonant_d() {
+        assert_eq!(add_mark_to_char('d', 4), 'đ');
+        assert_eq!(add_mark_to_char('d', 0), 'd');
+    }
 }
