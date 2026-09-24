@@ -31,6 +31,10 @@ fn test_complex_vietnamese_words() {
         ("uoons", "uốn"),
         ("hoas", "hóa"),
         ("quyeets", "quyết"),
+        ("chieeus", "chiếu"),
+        ("khuyuj", "khuỵu"),
+        ("lawmsa", "lấm"),
+        ("thooongf", "thoòng"),
     ];
 
     for (input, expected) in cases {

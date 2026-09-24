@@ -652,11 +652,16 @@ impl Engine {
         let has_undo =
             self.new_composition_in_place(&mut work, &mut scratch, lower_key, is_upper_case);
         if has_undo {
-            self.english_bypass = true;
-            // P5 tone strip: remove all tone marks when bypass is triggered by undo
-            for t in work.as_mut_slice() {
-                if t.effect_type == EffectType::ToneTransformation {
-                    t.effect = 0;
+            // Only lock into english bypass if the result of the undo is NOT a valid Vietnamese prefix.
+            // This allows words like "thoòng" (typed as "thooongf") to continue receiving tones
+            // ("oo" is a valid nucleus in VO_2), while "res" after undo still falls back to English.
+            if !self.is_valid_internal(work.as_slice(), false) {
+                self.english_bypass = true;
+                // P5 tone strip: remove all tone marks when bypass is triggered by undo
+                for t in work.as_mut_slice() {
+                    if t.effect_type == EffectType::ToneTransformation {
+                        t.effect = 0;
+                    }
                 }
             }
         }

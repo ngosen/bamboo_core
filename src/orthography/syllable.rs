@@ -216,6 +216,31 @@ impl Cvc {
     }
 }
 
+/// Resolves the display char of an appending entry after applying its mark/tone chain.
+fn resolve_appended_char(composition: &[Transformation], abs_idx: usize) -> char {
+    let app = &composition[abs_idx];
+    let mut c = app.effect_on;
+    for t in composition {
+        if t.target() != Some(abs_idx as u8) {
+            continue;
+        }
+        match t.effect_type {
+            EffectType::MarkTransformation => {
+                if t.effect == Mark::Raw as u8 {
+                    c = app.key;
+                } else {
+                    c = add_mark_to_char(c, t.effect);
+                }
+            }
+            EffectType::ToneTransformation => {
+                c = add_tone_to_char(c, t.effect);
+            }
+            _ => {}
+        }
+    }
+    c
+}
+
 fn find_tone_target(composition: &[Transformation], cvc: &Cvc, std_style: bool) -> Option<u8> {
     if composition.is_empty() {
         return None;
@@ -224,18 +249,25 @@ fn find_tone_target(composition: &[Transformation], cvc: &Cvc, std_style: bool) 
     let vowels = cvc.vo_slice();
     let lc = cvc.lc_slice();
 
-    let mut appending_vowels = [Transformation::default(); 8];
-    let mut appending_vowels_len = 0usize;
-    for t in vowels {
+    // Absolute indices of appending vowel letters. Comparing Transformation
+    // values is wrong when two vowels are identical (e.g. literal "oo").
+    let mut app_abs = [0usize; MAX_ACTIVE_TRANS];
+    let mut app_len = 0usize;
+    for (i, t) in composition.iter().enumerate() {
         if !t.has_target() {
-            appending_vowels[appending_vowels_len] = *t;
-            appending_vowels_len += 1;
+            app_abs[app_len] = i;
+            app_len += 1;
         }
     }
-    let app_vowels = &appending_vowels[..appending_vowels_len];
+    let (_fc_idxs, vo_idxs, _lc_idxs) =
+        extract_cvc_appending_indices(composition, &app_abs[..app_len]);
+    let appending_vowels_len = vo_idxs.len();
+    if appending_vowels_len == 0 {
+        return None;
+    }
 
     if appending_vowels_len == 1 {
-        return composition.iter().position(|t| *t == app_vowels[0]).map(|v| v as u8);
+        return Some(vo_idxs[0] as u8);
     }
 
     if appending_vowels_len == 2 && std_style {
@@ -249,58 +281,50 @@ fn find_tone_target(composition: &[Transformation], cvc: &Cvc, std_style: bool) 
                     || (fc.len() == 1 && fc[0].key == 'h')
             };
             target = Some(if !lc.is_empty() || is_th_or_h {
-                composition.iter().position(|t| *t == app_vowels[1]).unwrap_or(0) as u8
+                vo_idxs[1] as u8
             } else {
-                composition.iter().position(|t| *t == app_vowels[0]).unwrap_or(0) as u8
+                vo_idxs[0] as u8
             });
         } else {
-            for trans in vowels {
-                if matches!(trans.result, 'ơ' | 'ê' | 'ô' | 'â' | 'ă') {
-                    target = Some(trans.target().unwrap_or_else(|| {
-                        composition.iter().position(|t| t == trans).unwrap_or(0) as u8
-                    }));
+            // Use the *resolved* base char so a cancelled mark chain (e.g. "ooo"
+            // undoing "oo"→"ô" on the first "o") does not steal the tone target.
+            for &abs in vo_idxs.iter() {
+                let base = add_tone_to_char(resolve_appended_char(composition, abs), 0);
+                if matches!(base, 'ơ' | 'ê' | 'ô' | 'â' | 'ă') {
+                    target = Some(abs as u8);
                 }
             }
         }
         if target.is_none() {
-            target = Some(if !lc.is_empty() {
-                composition.iter().position(|t| *t == app_vowels[1]).unwrap_or(0) as u8
-            } else {
-                composition.iter().position(|t| *t == app_vowels[0]).unwrap_or(0) as u8
-            });
+            target = Some(if !lc.is_empty() { vo_idxs[1] as u8 } else { vo_idxs[0] as u8 });
         }
         return target;
     }
 
     if appending_vowels_len == 2 {
         if !lc.is_empty() {
-            return composition.iter().position(|t| *t == app_vowels[1]).map(|v| v as u8);
+            return Some(vo_idxs[1] as u8);
         }
 
         // Compare raw key chars directly — no heap allocation needed.
+        let app_vowels = [composition[vo_idxs[0]], composition[vo_idxs[1]]];
         let mut raw = ['\0'; 4];
-        let raw_len = raw_keys_of(app_vowels, &mut raw);
+        let raw_len = raw_keys_of(&app_vowels, &mut raw);
         let tone_on_second = raw_len == 2
             && matches!(
                 (raw[0], raw[1]),
                 ('o', 'a') | ('o', 'e') | ('u', 'y') | ('u', 'e') | ('u', 'o')
             );
-        return Some(if tone_on_second {
-            composition.iter().position(|t| *t == app_vowels[1]).unwrap_or(0) as u8
-        } else {
-            composition.iter().position(|t| *t == app_vowels[0]).unwrap_or(0) as u8
-        });
+        return Some(if tone_on_second { vo_idxs[1] as u8 } else { vo_idxs[0] as u8 });
     }
 
     if appending_vowels_len == 3 {
+        let app_vowels =
+            [composition[vo_idxs[0]], composition[vo_idxs[1]], composition[vo_idxs[2]]];
         let mut raw = ['\0'; 4];
-        let raw_len = raw_keys_of(app_vowels, &mut raw);
+        let raw_len = raw_keys_of(&app_vowels, &mut raw);
         let is_uye = raw_len == 3 && raw[0] == 'u' && raw[1] == 'y' && raw[2] == 'e';
-        return Some(if is_uye {
-            composition.iter().position(|t| *t == app_vowels[2]).unwrap_or(0) as u8
-        } else {
-            composition.iter().position(|t| *t == app_vowels[1]).unwrap_or(0) as u8
-        });
+        return Some(if is_uye { vo_idxs[2] as u8 } else { vo_idxs[1] as u8 });
     }
 
     None
