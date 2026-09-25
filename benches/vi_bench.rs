@@ -70,7 +70,7 @@ fn main() {
     );
     println!("              FULL 4-WAY REAL-TIME KEYSTROKE & IME BENCHMARK SUITE (2026)");
     println!(
-        "              Bamboo Core (v0.3.24) | Skey-Engine (v0.1.23) | Uvie (v2.7.0) | Vi (v0.8.0)"
+        "              Bamboo Core (v0.3.25) | Skey-Engine (v0.1.23) | Uvie (v2.7.0) | Vi (v0.8.0)"
     );
     println!(
         "========================================================================================================================"

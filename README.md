@@ -13,7 +13,7 @@ A high-performance Vietnamese input method engine (IME) core written in Rust, po
 - **SWAR / Vectorized matching**: Branchless 8-byte word lookups for transition routing
 - **Parallel batch processing**: Rayon-powered work-stealing for bulk text processing (`parallel` feature)
 - **Zero heap allocation** in core processing path (stack-allocated buffers)
-- **O(1) backspace** via snapshot stack
+- **O(1) backspace** via compact 8-byte snapshot stack
 - **O(N) single-pass** spelling validation
 - **FFI** for C/C++ integration and **WASM** bindings
 
@@ -21,7 +21,7 @@ A high-performance Vietnamese input method engine (IME) core written in Rust, po
 
 ```toml
 [dependencies]
-bamboo-core = "0.3.24"
+bamboo-core = "0.3.25"
 ```
 
 ## Quick Start — IME Integration
@@ -154,7 +154,7 @@ assert_eq!(engine.get_processed_str(OutputOptions::FULL_TEXT), "Trăng");
 
 ## Performance & Benchmarks
 
-Bamboo Core is architected for zero heap allocations in the interactive typing loop, sub-microsecond keystroke latency, and high CPU cache efficiency via L1 cache line packing and SWAR vector matching.
+Bamboo Core is architected for zero heap allocations in the interactive typing loop, sub-microsecond keystroke latency, and high CPU cache efficiency via L1 cache line packing and SWAR vector matching. Since `v0.3.25` the engine footprint shrinks to ~1.3 KB (8-byte snapshots, cache-line-packed DFA states, dense phonetics tables).
 
 | Benchmark Scenario | Previous Baseline (`v0.3.19`) | Optimized (`v0.3.21`) | Speedup |
 |---|---|---|---|
@@ -172,10 +172,10 @@ Bamboo Core is architected for zero heap allocations in the interactive typing l
 
 The codebase follows a modular domain-driven architecture designed for zero allocations and extreme CPU cache locality:
 
-- **`engine` (`src/engine/`)**: Core state machine managing active syllable compositions (`TransformationStack`), Counting Sort pre-partitioned rule index tables (`EngineRules`), $O(1)$ keystroke rollback snapshots (`Snapshot`), and word restoration.
+- **`engine` (`src/engine/`)**: Core state machine managing active syllable compositions (`TransformationStack`), Counting Sort pre-partitioned rule index tables (`EngineRules`), $O(1)$ keystroke rollback snapshots (8-byte `Snapshot`), and word restoration.
 - **`input_method` (`src/input_method/`)**: Input method definitions (Telex, VNI, VIQR, Microsoft layout) with zero-copy rule sharing across instances via `Arc<EngineRules>` and `Arc<InputMethod>`.
-- **`orthography` (`src/orthography/`)**: Vietnamese orthography domain covering character phonetics, diacritic and tone tables, $O(1)$ bitmask syllable validation (`spelling`), and CVC syllable boundary extraction.
-- **`dfa` (`src/dfa/`)**: JIT cache with flat arena storage, 128-bit bitset fast rejection, SWAR 8-byte chunk scanning for state transitions, and canvas flattener.
+- **`orthography` (`src/orthography/`)**: Vietnamese orthography domain covering character phonetics, dense diacritic and tone tables, $O(1)$ bitmask syllable validation (`spelling`), and CVC syllable boundary extraction.
+- **`dfa` (`src/dfa/`)**: JIT cache with flat arena storage, 128-bit bitset fast rejection, SWAR 8-byte chunk scanning for state transitions, 64-byte cache-line state layout, and canvas flattener.
 - **`encoder` (`src/encoder/`)**: Zero-allocation legacy encoding conversion supporting 16 Vietnamese character sets (TCVN3, VNI-Windows, VIQR, VISCII, VPS, etc.).
 - **`ffi` (`src/ffi.rs`) & `wasm` (`src/wasm.rs`)**: Safe C-ABI bindings with `#![deny(unsafe_op_in_unsafe_fn)]` and WebAssembly wrappers.
 

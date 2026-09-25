@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.25] - 2026-09-25
+
+### Performance & Memory
+- **Compact Snapshot Stack:** `Snapshot` shrunk from 272 B to 8 B (`state_id` + `upper_mask` + `active_len` + flags), cutting the `Engine` footprint from ~5.3 KB to ~1.3 KB; the English bypass buffer is now lazily boxed.
+- **Cache-Line DFA States:** `Dfa` state reduced from 160 B to 88 B so hot fields fit a single 64 B cache line, with `u16` state IDs.
+- **Flattened Output Caching:** DFA states cache flattened lowercase output (`flat_arena`); a DFA hit becomes memcpy + case-apply instead of full effect-chain resolution.
+- **Dense Phonetics Tables:** `MARK_TABLE [[char; 5]; 72]` replaces 4 PHF lookups per `add_mark_to_char` call with 1–2 array loads; `const fn strip_mark` removes PHF lookups from the spelling inner loop.
+- **Hot-Path Cleanup:** Eliminated double `update_cached_output` on the slow path (~2x flatten cost), replaced heap `flatten_slice` with stack `uho_tail_match_composition`, hoisted `get_applicable_rules` and `extract_cvc_trans`, replaced the `[bool; 16]` case shuffle with a `u16` upper-mask bitmask, and removed the dead `uoh_tail_match`.
+
+### Bug Fixes
+- **Tone on Literal `oo` (VO_2):** Typing `thooongf` now yields `thoòng` — English bypass is gated on `is_valid` after mark/tone undo so words with literal `oo` still accept tones.
+- **Tone Target Resolution:** `find_tone_target` uses absolute vowel indices and resolved mark chains so an undone `ô` no longer steals the tone target.
+- **`extract_cvc_appending_indices`:** Fixed absolute-index bug (`results[fc[0]]` → `results[0]`).
+- **DFA Hash Collisions:** `add_state` now backward-scans for previously inserted compositions instead of overwriting on collision.
+
+### Testing & Infrastructure
+- **Criterion Benchmarks:** New `benches/criterion_bench.rs` with `black_box`-sealed hot paths.
+- **Allocation Regression Suite:** `tests/alloc_regression.rs` asserts zero heap allocations across 7 scenarios with a counting allocator.
+- **Skey Parity Suite:** 16 tests ported from skey-engine (`tests/skey_parity.rs`), all passing.
+- **Dependency Updates:** skey-engine 0.1.4 → 0.1.23, uvie 2.1.1 → 2.7.0.
+
 ## [0.3.24] - 2026-09-14
 
 ### Performance & Memory Architecture
