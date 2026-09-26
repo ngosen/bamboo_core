@@ -2,6 +2,7 @@
 name = "bamboo-core"
 version = "0.3.25"
 edition = "2024"
+rust-version = "1.87"
 
 description = "Vietnamese input method engine written in Rust"
 license = "MIT"

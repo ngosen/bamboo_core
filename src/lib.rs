@@ -182,7 +182,7 @@ pub mod advanced {
     pub use crate::charset_def::{
         CharsetDefinition, get_charset_definition, get_charset_definitions,
     };
-    pub use crate::dfa::{Dfa, State};
+    pub use crate::dfa::{DFA_MAX_STATES, Dfa, State};
     pub use crate::encoder::{
         Charset, charset_names, encode, encode_charset, get_charset_name, get_charset_names,
     };

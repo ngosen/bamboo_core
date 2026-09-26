@@ -56,6 +56,16 @@ pub struct Engine {
     /// Lazily-initialized scratch engine for `restore_last_word` to avoid repeated `with_config`.
     pub(crate) scratch_engine: Option<Box<Engine>>,
     english_bypass: bool,
+    /// True once the DFA refused a new composition (frozen at
+    /// [`crate::dfa::DFA_MAX_STATES`]).
+    ///
+    /// Perf hint only: while detached, the JIT cache attempt is skipped and
+    /// keystrokes take the rule-engine slow path (correct, uncached) until
+    /// `commit`/`reset` or a backspace back into cached state.
+    /// Correctness does NOT rely on this flag — the fast path is structurally
+    /// guarded by `(active_len == 0 || current_state_id != 0)`, so a lookup
+    /// from state 0 can only run on empty active text (true word start).
+    dfa_detached: bool,
 }
 
 impl Engine {
@@ -113,6 +123,7 @@ impl Engine {
             bypass_buffers: None,
             scratch_engine: None,
             english_bypass: false,
+            dfa_detached: false,
         }
     }
 
@@ -195,6 +206,15 @@ impl Engine {
         let snap = &self.snapshots[self.snapshot_len];
         self.current_state_id = snap.state_id;
         self.english_bypass = snap.flags & FLAG_ENGLISH_BYPASS != 0;
+        if snap.state_id != 0 {
+            // Restored from the DFA arena (or a bypass buffer holding exactly
+            // that state's composition): the state identifies the active
+            // composition again, so fast-path lookups are sound.
+            self.dfa_detached = false;
+        } else if snap.active_len == 0 {
+            // Restored to empty: state 0 soundly identifies empty composition.
+            self.dfa_detached = false;
+        }
         if snap.flags & FLAG_NEEDS_BUFFER != 0 {
             if let Some(bufs) = &self.bypass_buffers {
                 self.active_buffer = bufs[self.snapshot_len];
@@ -247,6 +267,10 @@ impl Engine {
         compiler.compile_common();
         self.dfa = compiler.dfa;
         self.current_state_id = 0;
+        self.dfa_detached = false;
+        // Snapshot state IDs refer to the discarded DFA — restoring them would
+        // read foreign compositions (or panic) in the replacement.
+        self.snapshot_len = 0;
     }
 
     fn get_applicable_rules(&self, key: char) -> &[Rule] {
@@ -593,7 +617,16 @@ impl Engine {
         // DFA Fast Path: if DFA has a cached transition, key is valid.
         // Skip can_process_key_raw entirely.
         // Uses lowercase key for DFA lookup — uppercase shares the same DFA cache.
-        if lower_key.is_ascii() {
+        // Structural guard: state 0 only identifies empty active text. With
+        // non-empty residue (frozen/refused composition, digit residue from
+        // `push_active`, non-ASCII/English residue) a lookup from state 0
+        // could false-hit a word-start edge and wipe the composition, so those
+        // keys take the slow path. Skipped while detached (perf: the frozen
+        // DFA would miss anyway).
+        if !self.dfa_detached
+            && lower_key.is_ascii()
+            && (self.active_len == 0 || self.current_state_id != 0)
+        {
             let next_state_id =
                 self.dfa.get_state(self.current_state_id).get_transition(lower_key as u8);
             if next_state_id != 0 {
@@ -645,6 +678,23 @@ impl Engine {
         // Snapshot only needed before slow-path mutations (new_composition_in_place).
         self.push_snapshot();
 
+        // The JIT edge cur--key-->next below is only sound when `cur`
+        // identifies the pre-key active composition (case-insensitive: the DFA
+        // is lowercase-canonical). Residue states — frozen refusal, digit /
+        // non-ASCII / English residue, retargeted tone — must not link edges
+        // (e.g. a word-start edge must never point at a mid-word composition).
+        // Slow path only: one memcmp over <=16 transformations.
+        let prefix_known = if self.active_len == 0 {
+            // Word start: only state 0 identifies empty text.
+            self.current_state_id == 0
+        } else {
+            !self.dfa_detached
+                && self.current_state_id != 0
+                && self
+                    .dfa
+                    .composition_matches_canonical(self.current_state_id, self.active_slice())
+        };
+
         let mut work = self.work_comp;
         let mut scratch = self.scratch_comp;
 
@@ -685,7 +735,12 @@ impl Engine {
 
         // Try to update DFA (Lazy JIT).
         // Always cache using lowercase key so uppercase keys reuse the same DFA transitions.
-        if !self.english_bypass && lower_key.is_ascii() && work.len() <= MAX_ACTIVE_TRANS {
+        // Skipped while detached: the DFA is frozen, slow path stays correct uncached.
+        if !self.english_bypass
+            && !self.dfa_detached
+            && lower_key.is_ascii()
+            && work.len() <= MAX_ACTIVE_TRANS
+        {
             // For uppercase: create a lowercase copy of the composition for DFA caching.
             // This ensures both 'a' and 'A' share the same DFA transition from the same state.
             let cache_comp = if work.as_slice().iter().any(|t| t.is_upper_case) {
@@ -699,11 +754,35 @@ impl Engine {
                 work.as_slice()
             };
             let next_id = self.dfa.add_state(cache_comp);
-            self.dfa.states[self.current_state_id as usize]
-                .set_transition(lower_key as u8, next_id);
-            self.current_state_id = next_id;
+            if next_id != 0 {
+                // Link only on a known prefix; otherwise `current_state_id`
+                // (e.g. state 0 over residue) does not describe the pre-key
+                // composition and the edge would corrupt the trie. The new
+                // state itself still identifies the post-key active text, so
+                // `current_state_id` is always updated.
+                if prefix_known {
+                    self.dfa.states[self.current_state_id as usize]
+                        .set_transition(lower_key as u8, next_id);
+                }
+                self.current_state_id = next_id;
+            } else if self.dfa.is_full() {
+                // DFA frozen: detach so later keys take the slow path instead
+                // of false-hitting word-start edges from state 0. Snapshots
+                // already cover backspace via bypass_buffers (current == 0).
+                self.dfa_detached = true;
+                self.current_state_id = self.dfa.find_state(cache_comp).unwrap_or(0);
+            } else {
+                self.current_state_id = self.dfa.find_state(cache_comp).unwrap_or(0);
+            }
         } else {
-            self.current_state_id = self.dfa.find_state(work.as_slice()).unwrap_or(0);
+            // Canonical (lowercase) lookup: the map stores lowercase-canonical
+            // compositions (see `cache_comp` above), so work carrying uppercase
+            // bits would miss an existing state on a raw `find_state`.
+            let mut lower = work;
+            for t in lower.as_mut_slice() {
+                t.is_upper_case = false;
+            }
+            self.current_state_id = self.dfa.find_state(lower.as_slice()).unwrap_or(0);
         }
 
         self.set_active_from_stack(&mut work);
@@ -737,6 +816,7 @@ impl Engine {
         self.current_state_id = 0;
         self.snapshot_len = 0;
         self.english_bypass = false;
+        self.dfa_detached = false;
     }
 
     /// Returns the currently active syllable as a borrowed string slice.
@@ -860,6 +940,8 @@ impl Engine {
         // Keystroke snapshots are stale after compaction; the DFA fast path no longer matches.
         self.snapshot_len = 0;
         self.current_state_id = 0;
+        // Detach only with non-empty residue: state 0 soundly identifies empty.
+        self.dfa_detached = self.active_len > 0;
 
         if self.active_len > 0 {
             crate::syllable::refresh_last_tone_target_into(
@@ -880,6 +962,7 @@ impl Engine {
         self.current_state_id = 0;
         self.snapshot_len = 0;
         self.english_bypass = false;
+        self.dfa_detached = false;
     }
 
     /// Returns the number of DFA states currently cached.
@@ -897,9 +980,54 @@ impl Engine {
         self.dfa.hash_to_state.len()
     }
 
+    /// Returns the number of bytes in the DFA flattened-output arena.
+    pub const fn dfa_flat_len(&self) -> usize {
+        self.dfa.flat_len()
+    }
+
+    /// Returns DFA Vec capacities for memory accounting (states slots).
+    pub const fn dfa_states_capacity(&self) -> usize {
+        self.dfa.states_capacity()
+    }
+
+    /// Returns DFA arena capacity in [`Transformation`] slots.
+    pub const fn dfa_arena_capacity(&self) -> usize {
+        self.dfa.arena_capacity()
+    }
+
+    /// Returns DFA flat-arena capacity in bytes.
+    pub const fn dfa_flat_capacity(&self) -> usize {
+        self.dfa.flat_capacity()
+    }
+
+    /// Returns DFA hash-map capacity (buckets).
+    pub fn dfa_map_capacity(&self) -> usize {
+        self.dfa.map_capacity()
+    }
+
+    /// Estimates DFA heap `used` bytes (no slack). See [`crate::dfa::Dfa::memory_used_bytes`].
+    pub fn dfa_memory_used(&self) -> usize {
+        self.dfa.memory_used_bytes()
+    }
+
+    /// Estimates DFA heap `allocated` bytes (with Vec slack).
+    pub fn dfa_memory_allocated(&self) -> usize {
+        self.dfa.memory_allocated_bytes()
+    }
+
     /// Returns the capacity (in bytes) of the `committed_text` buffer.
     pub const fn committed_text_capacity(&self) -> usize {
         self.committed_text.capacity()
+    }
+
+    /// Returns the length (in bytes) of the committed text.
+    pub const fn committed_text_len(&self) -> usize {
+        self.committed_text.len()
+    }
+
+    /// Returns true if the lazy snapshot bypass buffer (4 KiB) has been allocated.
+    pub const fn bypass_allocated(&self) -> bool {
+        self.bypass_buffers.is_some()
     }
 
     /// Returns the number of active transformations in the current syllable.
@@ -1118,5 +1246,125 @@ mod tests {
         // Verify Engine::new also picks up shared rules automatically
         let e3 = Engine::new(InputMethod::telex());
         assert!(Arc::ptr_eq(&e1.rules, &e3.rules));
+    }
+
+    #[test]
+    fn word_start_edge_never_wipes_residue() {
+        // English-mode typing leaves state 0 + non-empty active text (bypass
+        // branch appends raw without DFA lookup). Switching back to Vietnamese
+        // mode and typing a key with a pre-cached word-start edge must extend
+        // the residue via the slow path, not wipe it via a false fast-path
+        // hit from state 0.
+        let mut e = Engine::new(InputMethod::telex());
+        e.process_str("namf", Mode::Vietnamese); // "nàm", caches state0--'n'
+        e.process_key(' ', Mode::Vietnamese);
+        e.commit();
+
+        e.process_str("hello", Mode::English);
+        assert_eq!(e.output_str(), "hello");
+        e.process_key('n', Mode::Vietnamese);
+        assert_eq!(e.output_str(), "hellon");
+    }
+
+    #[test]
+    fn jit_never_overwrites_word_start_edge_from_residue() {
+        // Full trace: 'n' from residue must not repoint the word-start edge.
+        let mut e = Engine::new(InputMethod::telex());
+        e.process_str("namf", Mode::Vietnamese); // caches 0--'n'
+        e.process_key(' ', Mode::Vietnamese);
+        e.commit();
+
+        e.process_str("hello", Mode::English); // residue, state 0
+        e.process_key('n', Mode::Vietnamese); // slow path: "hellon"
+        assert_eq!(e.output_str(), "hellon");
+        e.process_key(' ', Mode::Vietnamese);
+        e.commit();
+
+        // A fresh word starting with 'n' must use the original edge:
+        // 'n' alone -> "n", then "namf" -> "nàm" (not "hellon...").
+        e.process_key('n', Mode::Vietnamese);
+        assert_eq!(e.output_str(), "n");
+        e.process_str("amf", Mode::Vietnamese);
+        assert_eq!(e.output_str(), "nàm");
+    }
+
+    #[test]
+    fn uppercase_prefix_still_links_edges() {
+        // The DFA is lowercase-canonical: an uppercase active buffer whose
+        // canonical form is cached must still qualify as a known prefix and
+        // link JIT edges (case-insensitive match), which then serve typing.
+        let mut e = Engine::new(InputMethod::telex());
+        e.process_str("namf", Mode::Vietnamese);
+        e.process_key(' ', Mode::Vietnamese);
+        e.commit();
+
+        e.process_str("Nam", Mode::Vietnamese); // fast path, restores with case
+        assert_eq!(e.output_str(), "Nam");
+        let nam_id = e.current_state_id;
+        assert_ne!(nam_id, 0);
+
+        e.process_str("s", Mode::Vietnamese); // slow path from an uppercase prefix
+        assert_eq!(e.output_str(), "Nám");
+        assert_ne!(
+            e.dfa.get_state(nam_id).get_transition(b's'),
+            0,
+            "uppercase prefix must still link the JIT edge"
+        );
+
+        e.process_key(' ', Mode::Vietnamese);
+        e.commit();
+        // The edge written from the uppercase round must serve later typing.
+        e.process_str("nams", Mode::Vietnamese);
+        assert_eq!(e.output_str(), "nám");
+    }
+
+    #[test]
+    fn warm_up_invalidates_stale_snapshots() {
+        let mut e = Engine::new(InputMethod::telex());
+        e.process_str("tieengs", Mode::Vietnamese);
+        assert!(e.snapshot_len() > 0);
+        #[allow(deprecated)]
+        e.warm_up();
+        // Snapshot state IDs refer to the replaced DFA and must not be restored.
+        assert_eq!(e.snapshot_len(), 0);
+    }
+
+    #[test]
+    fn frozen_dfa_stays_correct_via_slow_path() {
+        use crate::dfa::DFA_MAX_STATES;
+
+        let mut e = Engine::new(InputMethod::telex());
+        // Saturate the DFA with distinct pure-consonant spam (worst case:
+        // appending-only, never triggers auto_correct bypass).
+        let alph: &[u8] = b"bcdfghjklmnpqrstvwxz";
+        let mut i = 0usize;
+        while e.dfa_state_count() < DFA_MAX_STATES {
+            let mut w = String::with_capacity(10);
+            let mut x = i;
+            for _ in 0..10 {
+                w.push(alph[x % alph.len()] as char);
+                x /= alph.len();
+            }
+            e.process_str(&w, Mode::Vietnamese);
+            e.process_key(' ', Mode::Vietnamese);
+            e.commit();
+            i += 1;
+            assert!(i < DFA_MAX_STATES + 1000, "freeze must trigger");
+        }
+        assert_eq!(e.dfa_state_count(), DFA_MAX_STATES);
+        let used = e.dfa_memory_used();
+        assert!(used < 4 * 1024 * 1024, "frozen used={} too big", used);
+
+        // After freeze, ordinary Vietnamese must still compose correctly
+        // through the rule-engine slow path, and must not grow the DFA.
+        let before = e.dfa_state_count();
+        for (keys, expect) in
+            [("tieengs", "tiếng"), ("vieetj", "việt"), ("namf", "nàm"), ("dduowngf", "đường")]
+        {
+            e.reset();
+            e.process_str(keys, Mode::Vietnamese);
+            assert_eq!(e.output_str(), expect, "wrong output for {keys} when frozen");
+        }
+        assert_eq!(e.dfa_state_count(), before, "frozen DFA must not grow");
     }
 }

@@ -16,6 +16,17 @@ const MAX_TRANS: usize = 16;
 /// Maximum DFA state ID that fits in `trans_states: [u16; 16]`.
 const MAX_STATE_ID: u32 = 0xFFFF;
 
+/// Hard cap on the number of DFA states (including state 0).
+///
+/// Bounds long-lived Engine memory: `8192*88B states + ~8192*~5*16B arena +
+/// flat + map ≈ 1.5–2MB used`. Valid Vietnamese needs ~4k states
+/// (`fc*vowel*tone`), so 8192 leaves 2x headroom while freezing adversarial
+/// unique spam (which previously grew unbounded past 1M states / 200MB+).
+/// When full, [`Dfa::add_state`] returns 0 for new compositions (dedup hits
+/// still succeed) and callers fall back to the rule-engine slow path, which
+/// stays correct but slower for the long tail.
+pub const DFA_MAX_STATES: usize = 8192;
+
 /// A compact DFA state representing a unique syllable composition.
 ///
 /// Transitions are stored as sorted `(key, state_id)` pairs instead of a full
@@ -255,12 +266,26 @@ impl Dfa {
         std::str::from_utf8(&self.flat_arena[start..end]).unwrap_or("")
     }
 
+    /// Returns true when the DFA has hit [`DFA_MAX_STATES`] and is frozen.
+    ///
+    /// Frozen DFA still serves all cached transitions (fast path untouched);
+    /// new compositions fall back to the rule-engine slow path.
+    pub const fn is_full(&self) -> bool {
+        self.states.len() >= DFA_MAX_STATES
+    }
+
     /// Adds a new composition state to the DFA or returns the existing state ID if already present.
     ///
     /// Uses the precomputed hash and arena verification for fast collision-free deduplication.
     /// On hash collision, scans backwards through earlier states sharing the same
     /// `comp_hash` so previously inserted compositions remain reachable.
     /// Also caches the flattened lowercase output for zero-cost preedit reconstruction.
+    ///
+    /// When the DFA is full ([`DFA_MAX_STATES`]) or the next ID would exceed the
+    /// `u16` transition address space, new compositions are **refused**: dedup
+    /// hits still return their existing ID, but misses return `0` without
+    /// allocating. Callers must skip `set_transition` on `0` and fall back to
+    /// `find_state(...).unwrap_or(0)` (rule-engine slow path stays correct).
     pub fn add_state(&mut self, composition: &[Transformation]) -> u32 {
         let hash = hash_composition(composition);
 
@@ -279,6 +304,12 @@ impl Dfa {
                     return old_id;
                 }
             }
+        }
+
+        // Freeze: refuse new storage (also fixes the old zombie leak where
+        // states kept pushing past u16 addressability with dropped edges).
+        if self.states.len() >= DFA_MAX_STATES || self.states.len() > MAX_STATE_ID as usize {
+            return 0;
         }
 
         let id = self.states.len() as u32;
@@ -308,6 +339,86 @@ impl Dfa {
 
         self.hash_to_state.insert(hash, id);
         id
+    }
+
+    /// Returns the number of bytes stored in the flattened-output arena.
+    pub const fn flat_len(&self) -> usize {
+        self.flat_arena.len()
+    }
+
+    /// Returns Vec capacities (allocated slots) for memory accounting.
+    pub const fn states_capacity(&self) -> usize {
+        self.states.capacity()
+    }
+
+    /// Returns arena capacity in [`Transformation`] slots.
+    pub const fn arena_capacity(&self) -> usize {
+        self.arena.capacity()
+    }
+
+    /// Returns flat-arena capacity in bytes.
+    pub const fn flat_capacity(&self) -> usize {
+        self.flat_arena.capacity()
+    }
+
+    /// Returns the hash-map item capacity (≈7/8 of `SwissTable` buckets) for memory accounting.
+    pub fn map_capacity(&self) -> usize {
+        self.hash_to_state.capacity()
+    }
+
+    /// Estimates DFA heap usage (`used` bytes, without Vec slack).
+    ///
+    /// Formula: `states.len()*88 + arena.len()*16 + flat.len()*1 + map.len()*16`.
+    /// Map per-entry cost uses 16 B (8 B key + 4 B value + alignment) + ~1 B
+    /// `SwissTable` control byte, rounded to 16 B/entry for a conservative floor.
+    /// Real allocator usage is slightly higher (control bytes + group overhead).
+    pub fn memory_used_bytes(&self) -> usize {
+        self.states.len() * std::mem::size_of::<State>()
+            + self.arena.len() * std::mem::size_of::<Transformation>()
+            + self.flat_arena.len()
+            + self.hash_to_state.len() * 16
+    }
+
+    /// Estimates DFA heap allocation (`allocated` bytes, with Vec slack).
+    ///
+    /// Same formula as [`Self::memory_used_bytes`] but with capacities.
+    ///
+    /// This is a deliberate floor, not the allocator's real number:
+    /// `capacity()` counts items (≈7/8 of `SwissTable` buckets), so the true
+    /// map allocation is ~20% higher (`buckets × (16 B data + 1 B ctrl)`).
+    /// Use it for relative before/after comparisons, not absolute RSS.
+    pub fn memory_allocated_bytes(&self) -> usize {
+        self.states.capacity() * std::mem::size_of::<State>()
+            + self.arena.capacity() * std::mem::size_of::<Transformation>()
+            + self.flat_arena.capacity()
+            + self.hash_to_state.capacity() * 16
+    }
+
+    /// Checks whether `composition` equals the stored composition of `state_id`,
+    /// ignoring `is_upper_case` bits.
+    ///
+    /// The DFA stores lowercase-canonical compositions (the engine lowercases
+    /// before caching and re-applies case on fast-path restore), so an active
+    /// buffer carrying uppercase bits still identifies the same state.
+    /// Used to gate JIT edge linking: an edge may only be written when the
+    /// source state identifies the pre-key composition.
+    pub fn composition_matches_canonical(
+        &self,
+        state_id: u32,
+        composition: &[Transformation],
+    ) -> bool {
+        let stored = self.get_composition(state_id);
+        if stored.len() != composition.len() {
+            return false;
+        }
+        stored.iter().zip(composition.iter()).all(|(a, b)| {
+            a.key == b.key
+                && a.effect_on == b.effect_on
+                && a.result == b.result
+                && a.target_raw() == b.target_raw()
+                && a.effect == b.effect
+                && a.effect_type == b.effect_type
+        })
     }
 
     /// Finds the state ID corresponding to an existing composition slice, if present.
@@ -390,19 +501,35 @@ impl<'a> DfaCompiler<'a> {
         self.engine.reset();
 
         let mut current_state = 0u32;
+        // State 0 identifies empty active text at word start. Afterwards the
+        // previous state only identifies the pre-key composition when its own
+        // add succeeded (a refusal leaves an unidentified residue that must
+        // not gain word-start — or any — edges).
+        let mut prev_known = true;
         for k in s.chars() {
             if !k.is_ascii() {
                 continue;
             }
 
             let prev_state = current_state;
+            let link_ok = prev_known;
             self.engine.process_key(k, crate::Mode::Vietnamese);
 
             let comp = self.engine.active_slice();
             current_state = self.dfa.add_state(comp);
 
-            // Link the transition
-            self.dfa.states[prev_state as usize].set_transition(k as u8, current_state);
+            // Link the transition (skip when frozen: add_state returns 0 for
+            // new compositions; 0 already means "no transition" on lookup).
+            // Skip equally when the source state does not identify the
+            // pre-key composition.
+            if current_state != 0 {
+                if link_ok {
+                    self.dfa.states[prev_state as usize].set_transition(k as u8, current_state);
+                }
+                prev_known = true;
+            } else {
+                prev_known = comp.is_empty();
+            }
         }
     }
 }
@@ -465,5 +592,85 @@ mod tests {
         assert_eq!(dfa.add_state(&comp_a), id_a);
         assert_eq!(dfa.add_state(&comp_b), id_b);
         assert_eq!(dfa.states.len(), 3); // state 0 + id_a + id_b, no duplicate
+    }
+
+    #[test]
+    fn freeze_bounds_memory_and_keeps_dedup() {
+        let mut dfa = Dfa::new();
+        // Fill to the cap with distinct 2-char compositions.
+        // ('a'+hi, 'a'+lo) over i < 8192 gives fully distinct pairs.
+        let mut i = 0u32;
+        while !dfa.is_full() {
+            let hi = char::from_u32('a' as u32 + (i / 64)).unwrap_or('x');
+            let lo = char::from_u32('a' as u32 + (i % 64)).unwrap_or('y');
+            let comp = [appending(hi), appending(lo)];
+            let id = dfa.add_state(&comp);
+            assert_ne!(id, 0, "distinct comp must allocate before full");
+            i += 1;
+            assert!(i < DFA_MAX_STATES as u32 + 10, "cap must trigger");
+        }
+        assert_eq!(dfa.states.len(), DFA_MAX_STATES);
+
+        let used = dfa.memory_used_bytes();
+        // 8192*88 states + arena + flat + map must stay in low single-digit MB.
+        assert!(used < 4 * 1024 * 1024, "frozen DFA used={} too big", used);
+
+        // A fresh composition is refused without allocating.
+        // Char 0x10FFFF never appears in the fill range above.
+        let fresh = [appending('\u{10FFFF}'), appending('\u{10FFFE}')];
+        assert_eq!(dfa.find_state(&fresh), None);
+        let before = dfa.states.len();
+        assert_eq!(dfa.add_state(&fresh), 0);
+        assert_eq!(dfa.states.len(), before);
+
+        // Dedup hits still succeed when full.
+        let dup = [appending('a'), appending('a')]; // i == 0
+        let dup_id = dfa.add_state(&dup);
+        assert_ne!(dup_id, 0);
+        assert_eq!(dfa.states.len(), before);
+        assert!(dfa.is_full());
+    }
+
+    #[test]
+    fn memory_accounting_is_internally_consistent() {
+        let mut dfa = Dfa::new();
+        let comp = [appending('a'), appending('b')];
+        dfa.add_state(&comp);
+        assert!(dfa.memory_allocated_bytes() >= dfa.memory_used_bytes());
+        assert!(dfa.states_capacity() >= dfa.states.len());
+        assert!(dfa.arena_capacity() >= dfa.arena.len());
+        assert!(dfa.flat_capacity() >= dfa.flat_len());
+        assert!(dfa.map_capacity() >= dfa.hash_to_state.len());
+    }
+
+    #[test]
+    fn composition_matches_canonical_ignores_case_only() {
+        let mut dfa = Dfa::new();
+        let lower = [appending('h'), appending('i')];
+        let id = dfa.add_state(&lower);
+
+        // Identical and case-only differences match (DFA is lowercase-canonical).
+        assert!(dfa.composition_matches_canonical(id, &lower));
+        let mut upper = lower;
+        upper[0].is_upper_case = true;
+        assert!(dfa.composition_matches_canonical(id, &upper));
+        let mut all_upper = lower;
+        for t in &mut all_upper {
+            t.is_upper_case = true;
+        }
+        assert!(dfa.composition_matches_canonical(id, &all_upper));
+
+        // Length, key, result, and target differences must not match.
+        assert!(!dfa.composition_matches_canonical(id, &[]));
+        assert!(!dfa.composition_matches_canonical(id, &[appending('h')]));
+        let mut other_key = lower;
+        other_key[1] = appending('o');
+        assert!(!dfa.composition_matches_canonical(id, &other_key));
+        let mut other_result = lower;
+        other_result[1].result = 'î';
+        assert!(!dfa.composition_matches_canonical(id, &other_result));
+        let mut other_target = lower;
+        other_target[1].set_target(Some(0));
+        assert!(!dfa.composition_matches_canonical(id, &other_target));
     }
 }
