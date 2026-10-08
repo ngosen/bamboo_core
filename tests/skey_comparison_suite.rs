@@ -62,8 +62,12 @@ fn create_engine(method: TestMethod, free_marking: bool) -> Engine {
         TestMethod::TelexBracketUO => InputMethod::telex_2(),
     };
 
-    let config =
-        Config { free_tone_marking: free_marking, std_tone_style: true, auto_correct: true };
+    let config = Config {
+        free_tone_marking: free_marking,
+        std_tone_style: true,
+        auto_correct: true,
+        ..Default::default()
+    };
 
     Engine::with_config(im, config)
 }
