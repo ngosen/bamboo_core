@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### API & Design Improvements
+- **Raw Full Text:** `FULL_TEXT | RAW` now returns the typed keys of committed words too, like Go's `GetProcessedString(EnglishMode | FullText)`. `FULL_TEXT` also honours `TONE_LESS`, `MARK_LESS` and `LOWER_CASE` for committed words and, like Go, ignores `PUNCTUATION_MODE`. Raw keys are appended once per `commit()`; plain `FULL_TEXT` stays zero-allocation when no word is active.
+
 ## [0.3.25] - 2026-09-25
 
 ### Performance & Memory
