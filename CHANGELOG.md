@@ -16,6 +16,9 @@ All notable changes to this project will be documented in this file.
 - **Undoing a mark keeps the tone:** typing a mark key again (`uwfw`, VNI `go366`) no longer drops the tone typed before it, so `uwfw` gives `ùw` instead of `uw`, as in the Go core.
 - **Backspace back to a valid word:** after an undo switched a word to raw keys (`eete` → `ete`), deleting back to a valid word (`et`) lets the next key add marks again, so `eete`, backspace, `e` gives `êt` as in the Go core.
 
+### API & Design Improvements
+- **Raw Full Text:** `FULL_TEXT | RAW` now returns the typed keys of committed words too, like Go's `GetProcessedString(EnglishMode | FullText)`. `FULL_TEXT` also honours `TONE_LESS`, `MARK_LESS` and `LOWER_CASE` for committed words and, like Go, ignores `PUNCTUATION_MODE`. Raw keys are appended once per `commit()`; plain `FULL_TEXT` stays zero-allocation when no word is active.
+
 ## [0.3.25] - 2026-09-25
 
 ### Performance & Memory
