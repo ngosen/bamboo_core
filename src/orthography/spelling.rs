@@ -17,46 +17,40 @@ const fn strip_mark(c: char) -> char {
     }
 }
 
-// Manual definition for now to ensure it compiles and is fast.
-// In a real scenario, we might use a build script or a more sophisticated const-fn.
-static FC_0: &[Token] = &[
+// Any known onset may pair with any rime; only the rime itself is constrained.
+static FC: &[Token] = &[
     (['b', '\0', '\0', '\0'], 1),
+    (['c', '\0', '\0', '\0'], 1),
+    (['c', 'h', '\0', '\0'], 2),
     (['d', '\0', '\0', '\0'], 1),
     (['đ', '\0', '\0', '\0'], 1),
     (['g', '\0', '\0', '\0'], 1),
     (['g', 'h', '\0', '\0'], 2),
-    (['m', '\0', '\0', '\0'], 1),
-    (['n', '\0', '\0', '\0'], 1),
-    (['n', 'h', '\0', '\0'], 2),
-    (['p', '\0', '\0', '\0'], 1),
-    (['p', 'h', '\0', '\0'], 2),
-    (['r', '\0', '\0', '\0'], 1),
-    (['s', '\0', '\0', '\0'], 1),
-    (['t', '\0', '\0', '\0'], 1),
-    (['t', 'r', '\0', '\0'], 2),
-    (['v', '\0', '\0', '\0'], 1),
-    (['z', '\0', '\0', '\0'], 1),
-];
-static FC_1: &[Token] = &[
-    (['c', '\0', '\0', '\0'], 1),
+    (['g', 'i', '\0', '\0'], 2),
     (['h', '\0', '\0', '\0'], 1),
     (['k', '\0', '\0', '\0'], 1),
     (['k', 'h', '\0', '\0'], 2),
-    (['q', 'u', '\0', '\0'], 2),
-    (['t', 'h', '\0', '\0'], 2),
-];
-static FC_2: &[Token] = &[
-    (['c', 'h', '\0', '\0'], 2),
-    (['g', 'i', '\0', '\0'], 2),
+    (['k', 'r', '\0', '\0'], 2),
     (['l', '\0', '\0', '\0'], 1),
+    (['m', '\0', '\0', '\0'], 1),
+    (['n', '\0', '\0', '\0'], 1),
     (['n', 'g', '\0', '\0'], 2),
     (['n', 'g', 'h', '\0'], 3),
+    (['n', 'h', '\0', '\0'], 2),
+    (['p', '\0', '\0', '\0'], 1),
+    (['p', 'h', '\0', '\0'], 2),
+    (['q', 'u', '\0', '\0'], 2),
+    (['r', '\0', '\0', '\0'], 1),
+    (['s', '\0', '\0', '\0'], 1),
+    (['t', '\0', '\0', '\0'], 1),
+    (['t', 'h', '\0', '\0'], 2),
+    (['t', 'r', '\0', '\0'], 2),
+    (['v', '\0', '\0', '\0'], 1),
     (['x', '\0', '\0', '\0'], 1),
+    (['z', '\0', '\0', '\0'], 1),
 ];
-static FC_3: &[Token] = &[(['đ', '\0', '\0', '\0'], 1), (['l', '\0', '\0', '\0'], 1)];
-static FC_4: &[Token] = &[(['h', '\0', '\0', '\0'], 1)];
 
-static FC_ROWS: &[&[Token]] = &[FC_0, FC_1, FC_2, FC_3, FC_4];
+static FC_ROWS: &[&[Token]] = &[FC];
 
 static VO_0: &[Token] = &[
     (['ê', '\0', '\0', '\0'], 1),
@@ -119,9 +113,10 @@ static VO_5: &[Token] = &[
     (['ư', 'u', '\0', '\0'], 2),
     (['u', 'y', 'a', '\0'], 3),
     (['u', 'y', 'u', '\0'], 3),
+    (['u', 'ê', 'u', '\0'], 3),
     (['y', 'ê', 'u', '\0'], 3),
 ];
-static VO_6: &[Token] = &[(['ă', '\0', '\0', '\0'], 1)];
+static VO_6: &[Token] = &[(['ă', '\0', '\0', '\0'], 1), (['u', '\0', '\0', '\0'], 1)];
 static VO_7: &[Token] = &[(['i', '\0', '\0', '\0'], 1)];
 
 static VO_ROWS: &[&[Token]] = &[VO_0, VO_1, VO_2, VO_3, VO_4, VO_5, VO_6, VO_7];
@@ -138,14 +133,6 @@ static LC_3: &[Token] = &[(['k', '\0', '\0', '\0'], 1)];
 static LC_4: &[Token] = &[(['c', '\0', '\0', '\0'], 1)];
 
 static LC_ROWS: &[&[Token]] = &[LC_0, LC_1, LC_2, LC_3, LC_4];
-
-const CV_ALLOWED_MASKS: [u16; 5] = [
-    (1 << 0) | (1 << 1) | (1 << 2) | (1 << 4) | (1 << 5),
-    (1 << 0) | (1 << 1) | (1 << 2) | (1 << 3) | (1 << 4) | (1 << 5),
-    (1 << 0) | (1 << 1) | (1 << 2) | (1 << 3) | (1 << 4) | (1 << 5),
-    1 << 6,
-    1 << 7,
-];
 
 const VC_ALLOWED_MASKS: [u16; 8] = [
     (1 << 0) | (1 << 2),
@@ -229,19 +216,6 @@ fn lookup_mask_optimized(
     }
 
     ret
-}
-
-#[inline(always)]
-const fn is_valid_cv(fc_mask: u16, vo_mask: u16) -> bool {
-    let mut mask = fc_mask;
-    while mask != 0 {
-        let idx = mask.trailing_zeros() as usize;
-        if idx < CV_ALLOWED_MASKS.len() && (CV_ALLOWED_MASKS[idx] & vo_mask) != 0 {
-            return true;
-        }
-        mask &= mask - 1;
-    }
-    false
 }
 
 #[inline(always)]
@@ -331,13 +305,6 @@ pub fn is_valid_cvc_chars(fc: &[char], vo: &[char], lc: &[char], full: bool) -> 
             return true;
         }
         return false;
-    }
-
-    if fc_mask != 0 {
-        let valid_cv = is_valid_cv(fc_mask, vo_mask);
-        if !valid_cv || lc_mask == 0 {
-            return valid_cv;
-        }
     }
 
     if lc_mask != 0 {
