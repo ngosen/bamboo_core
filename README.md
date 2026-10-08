@@ -166,7 +166,7 @@ Bamboo Core is architected for zero heap allocations in the interactive typing l
 | English Passthrough | 49.33 ns/op | **47.66 ns/op** | **+3.4%** |
 | Feed Benchmark | 88.08 ns/op | **87.21 ns/op** | **+1.0%** |
 
-*Benchmarks measured on x86_64 Linux, Rust 1.87+ release profile with Fat LTO.*
+*Benchmarks measured on x86_64 Linux, Rust 1.88+ release profile with Fat LTO.*
 
 ## Architecture
 
