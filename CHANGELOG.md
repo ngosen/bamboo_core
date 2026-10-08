@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 
 ### Bug Fixes
 - **`Engine::set_config`:** cached DFA transitions are dropped when the configuration changes, so new settings apply to words typed afterwards. The method is no longer `const`.
+- **Undoing a mark keeps the tone:** typing a mark key again (`uwfw`, VNI `go366`) no longer drops the tone typed before it, so `uwfw` gives `ùw` instead of `uw`, as in the Go core.
 
 ## [0.3.25] - 2026-09-25
 
