@@ -395,13 +395,13 @@ impl Engine {
                 first.result = vowel;
                 first.effect_on = vowel;
             }
-            if lower_key == 'w' && self.w2u_applies(composition.as_slice()) {
-                if let Some(first) = trans_buf.as_mut_slice().first_mut() {
-                    if first.result == 'w' {
-                        first.result = 'ư';
-                        first.effect_on = 'ư';
-                    }
-                }
+            if lower_key == 'w'
+                && self.w2u_applies(composition.as_slice())
+                && let Some(first) = trans_buf.as_mut_slice().first_mut()
+                && first.result == 'w'
+            {
+                first.result = 'ư';
+                first.effect_on = 'ư';
             }
         }
 
