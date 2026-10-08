@@ -706,13 +706,9 @@ impl Engine {
             // This allows words like "thoòng" (typed as "thooongf") to continue receiving tones
             // ("oo" is a valid nucleus in VO_2), while "res" after undo still falls back to English.
             if !self.is_valid_internal(work.as_slice(), false) {
+                // Keep the tone: "uwfw" is "ùw", which callers can tell apart
+                // from plain "uw" and show as the raw keys instead.
                 self.english_bypass = true;
-                // P5 tone strip: remove all tone marks when bypass is triggered by undo
-                for t in work.as_mut_slice() {
-                    if t.effect_type == EffectType::ToneTransformation {
-                        t.effect = 0;
-                    }
-                }
             }
         }
 
