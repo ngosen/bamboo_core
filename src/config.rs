@@ -3,6 +3,22 @@
 //! Allows fine-tuning tone placement rules, free tone marking flexibility,
 //! and orthographic syllable validation.
 
+/// When a typed `w` that marks no vowel turns into `ư`.
+///
+/// Only a `w` the input method would otherwise insert as a plain letter is affected,
+/// so `uw` still gives `ư` and presets that already map `w` to `ư` (Telex W) are unchanged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum W2uMode {
+    /// `w` stays `w` (`nhw` -> `nhw`).
+    #[default]
+    Disabled,
+    /// `w` becomes `ư` except at the start of a syllable, so English words starting
+    /// with `w` survive (`nhw` -> `như`, `wow` -> `wơ`).
+    NonStart,
+    /// `w` always becomes `ư` (`w` -> `ư`).
+    Everywhere,
+}
+
 /// Configuration options for the Bamboo engine.
 ///
 /// Use [`Config::default()`] for the standard modern Vietnamese input setup,
@@ -40,18 +56,32 @@ pub struct Config {
     ///
     /// Default: `true`.
     pub auto_correct: bool,
+    /// When a plain `w` turns into `ư`; see [`W2uMode`].
+    ///
+    /// Default: [`W2uMode::Disabled`].
+    pub w2u_mode: W2uMode,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { free_tone_marking: true, std_tone_style: true, auto_correct: true }
+        Self {
+            free_tone_marking: true,
+            std_tone_style: true,
+            auto_correct: true,
+            w2u_mode: W2uMode::Disabled,
+        }
     }
 }
 
 impl Config {
     /// Creates a new configuration with all standard defaults enabled.
     pub const fn new() -> Self {
-        Self { free_tone_marking: true, std_tone_style: true, auto_correct: true }
+        Self {
+            free_tone_marking: true,
+            std_tone_style: true,
+            auto_correct: true,
+            w2u_mode: W2uMode::Disabled,
+        }
     }
 
     /// Returns a [`ConfigBuilder`] for constructing a custom configuration.
@@ -64,6 +94,8 @@ impl Config {
     /// - Bit 0 (0x01): `free_tone_marking`
     /// - Bit 1 (0x02): `std_tone_style`
     /// - Bit 2 (0x04): `auto_correct`
+    /// - Bit 3 (0x08): `w2u_mode` is [`W2uMode::NonStart`]
+    /// - Bit 4 (0x10): `w2u_mode` is [`W2uMode::Everywhere`] (wins over bit 3)
     pub const fn to_flags(self) -> u32 {
         let mut flags = 0;
         if self.free_tone_marking {
@@ -75,6 +107,11 @@ impl Config {
         if self.auto_correct {
             flags |= 1 << 2;
         }
+        match self.w2u_mode {
+            W2uMode::Disabled => {}
+            W2uMode::NonStart => flags |= 1 << 3,
+            W2uMode::Everywhere => flags |= 1 << 4,
+        }
         flags
     }
 
@@ -83,11 +120,20 @@ impl Config {
     /// - Bit 0 (0x01): `free_tone_marking`
     /// - Bit 1 (0x02): `std_tone_style`
     /// - Bit 2 (0x04): `auto_correct`
+    /// - Bit 3 (0x08): `w2u_mode` is [`W2uMode::NonStart`]
+    /// - Bit 4 (0x10): `w2u_mode` is [`W2uMode::Everywhere`] (wins over bit 3)
     pub const fn from_flags(flags: u32) -> Self {
         Self {
             free_tone_marking: (flags & (1 << 0)) != 0,
             std_tone_style: (flags & (1 << 1)) != 0,
             auto_correct: (flags & (1 << 2)) != 0,
+            w2u_mode: if flags & (1 << 4) != 0 {
+                W2uMode::Everywhere
+            } else if flags & (1 << 3) != 0 {
+                W2uMode::NonStart
+            } else {
+                W2uMode::Disabled
+            },
         }
     }
 }
@@ -122,6 +168,12 @@ impl ConfigBuilder {
         self
     }
 
+    /// Sets when a plain `w` turns into `ư`.
+    pub const fn w2u_mode(mut self, mode: W2uMode) -> Self {
+        self.config.w2u_mode = mode;
+        self
+    }
+
     /// Builds and returns the final [`Config`].
     pub const fn build(self) -> Config {
         self.config
@@ -135,12 +187,14 @@ mod tests {
     #[test]
     fn to_flags_from_flags_roundtrip() {
         let configs = [
-            Config { free_tone_marking: true, std_tone_style: true, auto_correct: true },
-            Config { free_tone_marking: false, std_tone_style: false, auto_correct: false },
-            Config { free_tone_marking: true, std_tone_style: false, auto_correct: true },
-            Config { free_tone_marking: false, std_tone_style: true, auto_correct: false },
+            (true, true, true, W2uMode::Disabled),
+            (false, false, false, W2uMode::NonStart),
+            (true, false, true, W2uMode::Everywhere),
+            (false, true, false, W2uMode::Disabled),
+            (true, false, false, W2uMode::NonStart),
         ];
-        for original in configs {
+        for (free_tone_marking, std_tone_style, auto_correct, w2u_mode) in configs {
+            let original = Config { free_tone_marking, std_tone_style, auto_correct, w2u_mode };
             let flags = original.to_flags();
             let restored = Config::from_flags(flags);
             assert_eq!(original, restored, "Round-trip failed for {original:?}");
@@ -164,7 +218,21 @@ mod tests {
 
         assert_eq!(
             cfg,
-            Config { free_tone_marking: false, std_tone_style: true, auto_correct: false }
+            Config {
+                free_tone_marking: false,
+                std_tone_style: true,
+                auto_correct: false,
+                w2u_mode: W2uMode::Disabled,
+            }
         );
+    }
+
+    #[test]
+    fn w2u_flag_bits() {
+        assert_eq!(Config::builder().w2u_mode(W2uMode::NonStart).build().to_flags(), 0x0f);
+        assert_eq!(Config::builder().w2u_mode(W2uMode::Everywhere).build().to_flags(), 0x17);
+        assert_eq!(Config::from_flags(0x18).w2u_mode, W2uMode::Everywhere);
+        // Flags written before the w2u bits existed keep w2u off.
+        assert_eq!(Config::from_flags(7).w2u_mode, W2uMode::Disabled);
     }
 }

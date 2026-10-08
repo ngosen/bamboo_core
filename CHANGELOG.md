@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Features
+- **`w` to `ư`:** `Config::w2u_mode` / `ConfigBuilder::w2u_mode` take a `W2uMode`: `Disabled` (default, unchanged behaviour), `NonStart` (`nhw` → `như`, a syllable-initial `w` stays `w`) or `Everywhere` (`w` → `ư`).
+- **C configuration:** `bamboo_engine_new_with_flags(method, flags)` creates an engine from `Config::from_flags`; bits 3 (`NonStart`) and 4 (`Everywhere`) select the `w2u_mode`.
+
+### Bug Fixes
+- **`Engine::set_config`:** cached DFA transitions are dropped when the configuration changes, so new settings apply to words typed afterwards. The method is no longer `const`.
+
 ## [0.3.25] - 2026-09-25
 
 ### Performance & Memory

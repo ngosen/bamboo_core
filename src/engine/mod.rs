@@ -241,8 +241,17 @@ impl Engine {
     }
 
     /// Updates the engine configuration.
-    pub const fn set_config(&mut self, config: Config) {
+    pub fn set_config(&mut self, config: Config) {
+        if config == self.config {
+            return;
+        }
         self.config = config;
+        // Cached transitions were computed with the old settings.
+        self.dfa = crate::dfa::Dfa::new();
+        self.current_state_id = 0;
+        self.dfa_detached = false;
+        self.snapshot_len = 0;
+        self.scratch_engine = None;
     }
 
     /// Returns a reference to the current input method.
@@ -329,6 +338,14 @@ impl Engine {
                 is_upper_case,
                 &mut trans_buf,
             );
+            if lower_key == 'w' && self.w2u_applies(composition.as_slice()) {
+                if let Some(first) = trans_buf.as_mut_slice().first_mut() {
+                    if first.result == 'w' {
+                        first.result = 'ư';
+                        first.effect_on = 'ư';
+                    }
+                }
+            }
 
             // Temporary combined data to avoid full struct copy
             let combined_len = composition.len() + trans_buf.len();
@@ -368,6 +385,15 @@ impl Engine {
             );
         }
         has_undo
+    }
+
+    // `syllable` is the composition before the key, so empty means the key starts a syllable.
+    const fn w2u_applies(&self, syllable: &[Transformation]) -> bool {
+        match self.config.w2u_mode {
+            crate::W2uMode::Disabled => false,
+            crate::W2uMode::NonStart => !syllable.is_empty(),
+            crate::W2uMode::Everywhere => true,
+        }
     }
 
     fn last_syllable_start(composition: &[Transformation]) -> usize {
