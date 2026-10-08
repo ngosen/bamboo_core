@@ -331,26 +331,25 @@ impl Engine {
                 is_upper_case,
                 &mut trans_buf,
             );
+        }
 
-            // Temporary combined data to avoid full struct copy
-            let combined_len = composition.len() + trans_buf.len();
-            if combined_len <= MAX_ACTIVE_TRANS {
-                let mut tmp_data = [Transformation::default(); MAX_ACTIVE_TRANS];
-                tmp_data[..composition.len()].copy_from_slice(composition.as_slice());
-                tmp_data[composition.len()..combined_len].copy_from_slice(trans_buf.as_slice());
+        // Any key, not only a letter, can complete "uơ"/"ưo" + letter (e.g. a
+        // horn on "luộc"), so the second horn is checked after every key.
+        let combined_len = composition.len() + trans_buf.len();
+        if combined_len <= MAX_ACTIVE_TRANS && !self.input_method.super_keys.is_empty() {
+            let mut tmp_data = [Transformation::default(); MAX_ACTIVE_TRANS];
+            tmp_data[..composition.len()].copy_from_slice(composition.as_slice());
+            tmp_data[composition.len()..combined_len].copy_from_slice(trans_buf.as_slice());
 
-                if !self.input_method.super_keys.is_empty()
-                    && crate::syllable::uho_tail_match_composition(&tmp_data[..combined_len])
-                {
-                    let (target, rule) = crate::syllable::find_target(
-                        &tmp_data[..combined_len],
-                        self.get_applicable_rules(self.input_method.super_keys[0]),
-                        self.config,
-                    );
-                    if let (Some(target), Some(mut rule)) = (target, rule) {
-                        rule.key = '\0';
-                        trans_buf.push(Transformation::from_rule(rule, Some(target), false));
-                    }
+            if crate::syllable::uho_tail_match_composition(&tmp_data[..combined_len]) {
+                let (target, rule) = crate::syllable::find_target(
+                    &tmp_data[..combined_len],
+                    self.get_applicable_rules(self.input_method.super_keys[0]),
+                    self.config,
+                );
+                if let (Some(target), Some(mut rule)) = (target, rule) {
+                    rule.key = '\0';
+                    trans_buf.push(Transformation::from_rule(rule, Some(target), false));
                 }
             }
         }

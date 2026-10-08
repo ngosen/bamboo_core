@@ -70,7 +70,7 @@ fn test_vi_crate_simple_telex_sentences() {
     assert_eq!(type_phrase(&mut e, "vijete nam"), "việt nam");
     assert_eq!(type_phrase(&mut e, "gifang owi"), "giàng ơi");
     assert_eq!(type_phrase(&mut e, "Gifang owi"), "Giàng ơi");
-    assert_eq!(type_phrase(&mut e, "uow"), "ươ");
+    assert_eq!(type_phrase(&mut e, "uow"), "uơ");
     assert_eq!(type_phrase(&mut e, "uwo"), "ưo");
     assert_eq!(type_phrase(&mut e, "uwon"), "ươn");
     assert_eq!(type_phrase(&mut e, "huwo"), "hưo");

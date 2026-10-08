@@ -787,6 +787,9 @@ pub(crate) fn uho_tail_match_composition(composition: &[Transformation]) -> bool
         {
             let s = slot_of[target as usize];
             match t.effect_type {
+                EffectType::MarkTransformation if t.effect == Mark::Raw as u8 => {
+                    chars[s] = composition[target as usize].key;
+                }
                 EffectType::MarkTransformation => {
                     chars[s] = add_mark_to_char(chars[s], t.effect);
                 }
@@ -899,30 +902,11 @@ pub(crate) fn generate_transformations(
             new_comp[..base_len].copy_from_slice(composition);
             new_comp[base_len] = out.as_slice()[0];
 
-            let is_th_or_h_open = {
-                let cvc = extract_cvc_trans(composition);
-                let fc = cvc.fc_slice();
-                cvc.lc_len == 0
-                    && ((fc.len() == 2 && fc[0].key == 't' && fc[1].key == 'h')
-                        || (fc.len() == 1 && fc[0].key == 'h'))
-            };
-
-            if !is_th_or_h_open
-                && applicable_rule.get_mark() == Mark::Horn
-                && let (Some(target2), Some(mut virtual_rule)) = find_target_excluding(
-                    &new_comp[..new_len],
-                    applicable_rules,
-                    config,
-                    Some(target),
-                )
-                && virtual_rule.get_mark() == Mark::Horn
-            {
-                virtual_rule.key = '\0';
-                out.push(Transformation::from_rule(virtual_rule, Some(target2), false));
-            } else if !is_valid(&new_comp[..new_len], true)
+            // Only spread the mark when the syllable is incomplete without it:
+            // "khuơ" stays as typed, while "huơu" needs the second horn.
+            if !is_valid(&new_comp[..new_len], true)
                 && let (Some(target2), Some(mut virtual_rule)) =
                     find_target(&new_comp[..new_len], applicable_rules, config)
-                && virtual_rule.get_mark() != Mark::Horn
             {
                 virtual_rule.key = '\0';
                 out.push(Transformation::from_rule(virtual_rule, Some(target2), false));
