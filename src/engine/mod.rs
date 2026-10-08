@@ -10,6 +10,7 @@ use crate::input_method::{EffectType, InputMethod, Mark, Rule};
 use crate::mode::{Mode, OutputOptions};
 use crate::phonetics::{is_upper, lower, upper};
 
+pub mod rebuild;
 pub mod restore;
 pub mod rules;
 pub mod snapshot;

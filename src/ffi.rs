@@ -5,7 +5,7 @@
 
 #![deny(unsafe_op_in_unsafe_fn)]
 
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::ptr;
 use std::sync::Mutex;
@@ -344,6 +344,30 @@ pub unsafe extern "C" fn bamboo_engine_remove_last_output_char(engine: *mut Bamb
     e.remove_last_output_char();
 }
 
+/// Resets a specific engine instance and loads `text` as if it had been typed
+/// (see [`Engine::rebuild_from_text`]). A null `text` only resets the engine.
+///
+/// # Safety
+/// - `engine` must be a valid, non-null pointer to a `BambooEngine` instance.
+/// - `text` must be null or a valid NUL-terminated string; invalid UTF-8 is replaced.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn bamboo_engine_rebuild_from_text(
+    engine: *mut BambooEngine,
+    text: *const c_char,
+) {
+    // SAFETY: engine pointer checked for non-null and safely converted to a mutable reference.
+    let Some(e) = (unsafe { engine.as_mut() }) else {
+        return;
+    };
+    if text.is_null() {
+        e.reset();
+        return;
+    }
+    // SAFETY: text is non-null and the caller guarantees it is NUL-terminated.
+    let text = unsafe { CStr::from_ptr(text) }.to_string_lossy();
+    e.rebuild_from_text(&text);
+}
+
 /// Instance-based variant of [`bamboo_process_key_buf`].
 ///
 /// # Safety
@@ -476,6 +500,26 @@ mod tests {
         };
         assert_eq!(typed(0x07), "nhw");
         assert_eq!(typed(0x07 | 0x08), "như");
+    }
+
+    #[test]
+    fn test_ffi_rebuild_from_text() {
+        let engine = bamboo_engine_new(0); // Telex
+        let text = CString::new("xin tiếng").unwrap();
+
+        // SAFETY: `engine` and `text` are valid for the duration of the calls.
+        unsafe {
+            bamboo_engine_rebuild_from_text(engine, text.as_ptr());
+            let res_ptr = bamboo_engine_process(engine, 'f' as u32);
+            assert_eq!(CStr::from_ptr(res_ptr).to_str().unwrap(), "tiềng");
+            bamboo_free_string(res_ptr);
+
+            bamboo_engine_rebuild_from_text(engine, ptr::null());
+            assert_eq!((*engine).output(), "");
+            bamboo_engine_rebuild_from_text(ptr::null_mut(), text.as_ptr());
+
+            bamboo_engine_free(engine);
+        }
     }
 
     #[test]

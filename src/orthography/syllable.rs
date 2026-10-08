@@ -241,6 +241,11 @@ fn resolve_appended_char(composition: &[Transformation], abs_idx: usize) -> char
     c
 }
 
+/// Index of the vowel that should carry the tone of `composition`.
+pub(crate) fn tone_target(composition: &[Transformation], std_style: bool) -> Option<u8> {
+    find_tone_target(composition, &extract_cvc_trans(composition), std_style)
+}
+
 fn find_tone_target(composition: &[Transformation], cvc: &Cvc, std_style: bool) -> Option<u8> {
     if composition.is_empty() {
         return None;

@@ -7,6 +7,7 @@ All notable changes to this project will be documented in this file.
 ### Features
 - **`w` to `ư`:** `Config::w2u_mode` / `ConfigBuilder::w2u_mode` take a `W2uMode`: `Disabled` (default, unchanged behaviour), `NonStart` (`nhw` → `như`, a syllable-initial `w` stays `w`) or `Everywhere` (`w` → `ư`).
 - **C configuration:** `bamboo_engine_new_with_flags(method, flags)` creates an engine from `Config::from_flags`; bits 3 (`NonStart`) and 4 (`Everywhere`) select the `w2u_mode`.
+- **Rebuild From Text:** `Engine::rebuild_from_text` (FFI `bamboo_engine_rebuild_from_text`) loads existing text such as the word before the cursor, so the next tone, mark or backspace edits it as if it had been typed. Ported from Go bamboo-core `RebuildEngineFromText`; text up to the last word break is committed and the last word becomes the active composition.
 
 ### Bug Fixes
 - **`Engine::set_config`:** cached DFA transitions are dropped when the configuration changes, so new settings apply to words typed afterwards. The method is no longer `const`.
