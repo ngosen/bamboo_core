@@ -976,6 +976,11 @@ impl Engine {
                 self.config.std_tone_style,
             );
         }
+        // Deleting back to a valid word ("eete" -> "et") lets the next key
+        // add marks again, as if the invalid part was never typed.
+        if self.english_bypass && self.is_valid(false) {
+            self.english_bypass = false;
+        }
         self.update_cached_output();
     }
 
