@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Bug Fixes
+- **Backspace back to a valid word:** after an undo switched a word to raw keys (`eete` → `ete`), deleting back to a valid word (`et`) lets the next key add marks again, so `eete`, backspace, `e` gives `êt` as in the Go core.
+
 ## [0.3.25] - 2026-09-25
 
 ### Performance & Memory
