@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Features
+- **Custom Input Methods:** `InputMethod::from_definition` builds an input method from runtime key → rule pairs in the preset format (e.g. `("q", "DauSac")`), like Go bamboo-core's `ParseInputMethod` on a user map.
+
+### Bug Fixes
+- **Preset Rule Sharing:** `Engine::new`/`with_config` reuse a preset's shared rules only when the rules match, not just the name and rule count, so a custom input method named like a preset keeps its own keys.
+
 ## [0.3.25] - 2026-09-25
 
 ### Performance & Memory

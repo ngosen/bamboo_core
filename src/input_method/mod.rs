@@ -88,7 +88,8 @@ pub(crate) fn find_preset_shared(im: &InputMethod) -> Option<(Arc<InputMethod>, 
         "Telex W" => &PRESET_TELEX_W_SHARED,
         _ => return None,
     };
-    if im.rules.len() == entry.0.rules.len() {
+    // A custom definition may reuse a preset name, so match on content.
+    if im.rules == entry.0.rules && im.keys == entry.0.keys {
         Some((Arc::clone(&entry.0), Arc::clone(&entry.1)))
     } else {
         None
@@ -201,6 +202,23 @@ impl InputMethod {
     pub fn telex_w() -> Self {
         (*PRESET_TELEX_W_SHARED.0).clone()
     }
+
+    /// Builds an input method from a runtime key → rule definition, in the
+    /// format of the built-in presets (e.g. `("s", "DauSac")`, `("d", "D_Đ")`).
+    ///
+    /// Only the first character of each key is used; empty keys are skipped.
+    /// Rules are stored in entry order, which can only matter when two
+    /// entries share a key up to case (e.g. `w` and `W`).
+    pub fn from_definition<K, V>(
+        name: &'static str,
+        entries: impl IntoIterator<Item = (K, V)>,
+    ) -> Self
+    where
+        K: AsRef<str>,
+        V: AsRef<str>,
+    {
+        parse_entries(name, entries)
+    }
 }
 
 /// Parse a known input method by name from the built-in definitions.
@@ -214,9 +232,21 @@ pub(crate) fn parse_input_method_def(
     im_name: &'static str,
     im_def: &InputMethodDef,
 ) -> InputMethod {
+    parse_entries(im_name, im_def.entries())
+}
+
+fn parse_entries<K, V>(
+    im_name: &'static str,
+    entries: impl IntoIterator<Item = (K, V)>,
+) -> InputMethod
+where
+    K: AsRef<str>,
+    V: AsRef<str>,
+{
     let mut im = InputMethod { name: im_name, ..Default::default() };
 
-    for (key_str, line) in im_def.entries() {
+    for (key_str, line) in entries {
+        let (key_str, line) = (key_str.as_ref(), line.as_ref());
         let Some(key) = key_str.chars().next() else {
             continue;
         };
