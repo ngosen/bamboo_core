@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Features
+- **Rebuild From Text:** `Engine::rebuild_from_text` (FFI `bamboo_engine_rebuild_from_text`) loads existing text such as the word before the cursor, so the next tone, mark or backspace edits it as if it had been typed. Ported from Go bamboo-core `RebuildEngineFromText`; text up to the last word break is committed and the last word becomes the active composition.
+
 ## [0.3.25] - 2026-09-25
 
 ### Performance & Memory
