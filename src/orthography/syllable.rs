@@ -528,6 +528,44 @@ pub(crate) fn extract_last_word<'a>(
     (&[], composition)
 }
 
+/// Returns where the syllable that the next key edits starts: the last word,
+/// cut before the first letter that made it an invalid syllable. A tone key
+/// after "enl" thus only sees "l", and is typed as a letter.
+pub(crate) fn last_syllable_start(composition: &[Transformation]) -> usize {
+    let (previous, _) = extract_last_word(composition, None);
+    let mut start = previous.len();
+    for end in start + 1..composition.len() {
+        if !is_valid_from(composition, start, end + 1) {
+            start = end;
+        }
+    }
+    // Index targets cannot point before the slice, so keep effects with their letters.
+    while let Some(target) = composition[start..]
+        .iter()
+        .filter_map(Transformation::target)
+        .filter(|&t| (t as usize) < start)
+        .min()
+    {
+        start = target as usize;
+    }
+    start
+}
+
+/// `is_valid` on `composition[start..end]`, ignoring effects on letters before `start`.
+fn is_valid_from(composition: &[Transformation], start: usize, end: usize) -> bool {
+    let mut part = [Transformation::default(); MAX_ACTIVE_TRANS];
+    let len = end - start;
+    part[..len].copy_from_slice(&composition[start..end]);
+    for t in &mut part[..len] {
+        if let Some(target) = t.target() {
+            let outside = (target as usize) < start;
+            // Out of range, so it matches no letter, like Go's pointer that is in no list.
+            t.set_target(Some(if outside { MAX_ACTIVE_TRANS as u8 } else { target - start as u8 }));
+        }
+    }
+    is_valid(&part[..len], false)
+}
+
 fn is_effective(composition: &[Transformation], target_idx: usize, new_rule: &Rule) -> bool {
     // Undo pattern: the same tone/mark key pressed twice in a row on the same
     // target (e.g., "ss", "xx"). Deliberately left "not effective" so the
