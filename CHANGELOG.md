@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file.
 - **Perf:** the tone-refresh validity check is skipped when the word has no tone to move, so backspacing a toneless word is faster than before.
 - **Tone keys after an invalid word:** a key now edits only the part of the word after the last point where it stopped being a valid syllable, as in the Go core. A tone key after an invalid word is typed as a letter (`enlf` gives `enlf`, not `ènl`), and a tone stays on the syllable it was typed on (`mymfyk` gives `mỳmyk`, not `mymyk`).
 - **Perf:** `last_syllable_start` resumes from a self-validating hint instead of re-checking every prefix, recovering most of the slow-path cost above.
+- **Free onset–rime pairing:** any known onset now pairs with any rime (only the rime itself is constrained), so `krông`, `boặm`, `khuều` validate; the CV gate and its tables are removed.
 - **Horn placement after `uo`:** the horn now goes on `o` when nothing follows (`khuow` gives `khuơ`, not `khuơ` with spread) and spreads to `u` only when a letter follows (`huouw` gives `hươu`), matching Go bamboo-core. Note: bare `uow` now gives `uơ` instead of `ươ`.
 
 ## [0.3.25] - 2026-09-25
