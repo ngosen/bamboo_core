@@ -4,7 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Features
+- **Custom Input Methods:** `InputMethod::from_definition` builds an input method from runtime key → rule pairs in the preset format (e.g. `("q", "DauSac")`), like Go bamboo-core's `ParseInputMethod` on a user map.
+
 ### Bug Fixes
+- **Preset Rule Sharing:** `Engine::new`/`with_config` reuse a preset's shared rules only when the rules match, not just the name and rule count, so a custom input method named like a preset keeps its own keys.
 - **Undoing a mark keeps the tone:** typing a mark key again (`uwfw`, VNI `go366`) no longer drops the tone typed before it, so `uwfw` gives `ùw` instead of `uw`, as in the Go core.
 - **Backspace back to a valid word:** after an undo switched a word to raw keys (`eete` → `ete`), deleting back to a valid word (`et`) lets the next key add marks again, so `eete`, backspace, `e` gives `êt` as in the Go core.
 - **Backspace keeps the tone in place:** `remove_last_output_char` and `remove_last_char` move the tone to its standard position only when free tone marking is on and the remaining word is valid, as in the Go core. Deleting a key from an invalid word now brings back the text shown before that key (`craxyuk`, backspace gives `crãyu`, not `craỹu`).
