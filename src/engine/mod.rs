@@ -290,11 +290,13 @@ impl Engine {
         }
     }
 
-    fn can_process_key_raw(&self, lower_key: char) -> bool {
-        if crate::phonetics::is_alpha(lower_key)
-            || (lower_key.is_ascii() && self.rules.ascii_effect_keys[lower_key as usize])
+    fn is_input_method_key(&self, lower_key: char) -> bool {
+        (lower_key.is_ascii() && self.rules.ascii_effect_keys[lower_key as usize])
             || self.rules.non_ascii_effect_keys.binary_search(&lower_key).is_ok()
-        {
+    }
+
+    fn can_process_key_raw(&self, lower_key: char) -> bool {
+        if crate::phonetics::is_alpha(lower_key) || self.is_input_method_key(lower_key) {
             return true;
         }
         if crate::phonetics::is_word_break_symbol(lower_key) {
@@ -595,7 +597,11 @@ impl Engine {
         // English mode or English bypass active: skip all Vietnamese processing.
         // Direct buffer append — no DFA lookup, snapshot saved for backspace.
         if mode == Mode::English || self.english_bypass {
-            if crate::phonetics::is_word_break_symbol(lower_key) && self.active_len > 0 {
+            // VNI tone keys are digits: they belong to the word, so restore,
+            // raw output and backspace must still reach them.
+            let ends_word = crate::phonetics::is_word_break_symbol(lower_key)
+                && !self.is_input_method_key(lower_key);
+            if ends_word && self.active_len > 0 {
                 self.commit();
             }
             if self.active_len >= MAX_ACTIVE_TRANS {
@@ -607,7 +613,7 @@ impl Engine {
             self.active_buffer[self.active_len] =
                 crate::syllable::new_appending_trans(lower_key, is_upper_case);
             self.active_len += 1;
-            if crate::phonetics::is_word_break_symbol(lower_key) {
+            if ends_word {
                 self.commit();
             }
             self.current_state_id = 0;
