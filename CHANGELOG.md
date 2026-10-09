@@ -9,6 +9,8 @@ All notable changes to this project will be documented in this file.
 - **Backspace back to a valid word:** after an undo switched a word to raw keys (`eete` → `ete`), deleting back to a valid word (`et`) lets the next key add marks again, so `eete`, backspace, `e` gives `êt` as in the Go core.
 - **Backspace keeps the tone in place:** `remove_last_output_char` and `remove_last_char` move the tone to its standard position only when free tone marking is on and the remaining word is valid, as in the Go core. Deleting a key from an invalid word now brings back the text shown before that key (`craxyuk`, backspace gives `crãyu`, not `craỹu`).
 - **Perf:** the tone-refresh validity check is skipped when the word has no tone to move, so backspacing a toneless word is faster than before.
+- **Tone keys after an invalid word:** a key now edits only the part of the word after the last point where it stopped being a valid syllable, as in the Go core. A tone key after an invalid word is typed as a letter (`enlf` gives `enlf`, not `ènl`), and a tone stays on the syllable it was typed on (`mymfyk` gives `mỳmyk`, not `mymyk`).
+- **Perf:** `last_syllable_start` resumes from a self-validating hint instead of re-checking every prefix, recovering most of the slow-path cost above.
 
 ## [0.3.25] - 2026-09-25
 

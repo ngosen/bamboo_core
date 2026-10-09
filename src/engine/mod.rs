@@ -55,6 +55,10 @@ pub struct Engine {
 
     /// Lazily-initialized scratch engine for `restore_last_word` to avoid repeated `with_config`.
     pub(crate) scratch_engine: Option<Box<Engine>>,
+    /// Resume hint for `last_syllable_start`: consecutive slow-path keys see
+    /// the same prefix plus a short tail, so only suffix windows are
+    /// re-validated. Self-validating (stale ⇒ full rescan), 16 bytes.
+    syll_hint: crate::syllable::SyllHint,
     english_bypass: bool,
     /// True once the DFA refused a new composition (frozen at
     /// [`crate::dfa::DFA_MAX_STATES`]).
@@ -122,6 +126,7 @@ impl Engine {
             snapshot_len: 0,
             bypass_buffers: None,
             scratch_engine: None,
+            syll_hint: crate::syllable::SyllHint::NONE,
             english_bypass: false,
             dfa_detached: false,
         }
@@ -372,41 +377,16 @@ impl Engine {
         has_undo
     }
 
-    fn last_syllable_start(composition: &[Transformation]) -> usize {
-        let mut idx = composition.len();
-        let mut found_vowel = false;
-        let mut onset_count = 0;
-
-        while idx > 0 {
-            let tmp = &composition[idx - 1];
-            if !tmp.has_target() {
-                let is_v = crate::phonetics::is_vowel(tmp.result);
-                if is_v {
-                    if found_vowel && onset_count > 0 {
-                        break;
-                    }
-                    found_vowel = true;
-                } else if found_vowel {
-                    onset_count += 1;
-                    if onset_count > 3 {
-                        break;
-                    }
-                }
-            }
-            idx -= 1;
-        }
-
-        idx
-    }
-
     fn new_composition_in_place(
-        &self,
+        &mut self,
         composition: &mut TransformationStack,
         scratch: &mut TransformationStack,
         key: char,
         is_upper_case: bool,
     ) -> bool {
-        let syllable_abs_start = Self::last_syllable_start(composition.as_slice());
+        let (syllable_abs_start, hint) =
+            crate::syllable::last_syllable_start(composition.as_slice(), self.syll_hint);
+        self.syll_hint = hint;
 
         composition.drain_to(syllable_abs_start, scratch);
 

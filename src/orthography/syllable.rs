@@ -528,6 +528,138 @@ pub(crate) fn extract_last_word<'a>(
     (&[], composition)
 }
 
+/// Opaque resume hint for [`last_syllable_start`].
+///
+/// Typing extends the composition a few transformations at a time, so
+/// consecutive calls observe the same prefix plus a short new tail. The hint
+/// lets a call skip re-validating windows it already verified and only check
+/// the suffix windows covering new content: O(new) validity checks instead of
+/// O(len).
+///
+/// Self-validating: every field is re-checked against the current composition
+/// before use, so a stale hint only costs time (full rescan), never changes
+/// the result.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SyllHint {
+    /// `hash_composition` of `composition[..len]` when stored.
+    hash: u64,
+    /// Length of the composition when stored.
+    len: u8,
+    /// Main-loop start when stored, *before* the effect fixup below (the
+    /// fixup always re-runs fully, so resuming must continue from the
+    /// pre-fixup value or the replay diverges).
+    start: u8,
+    /// Whether the hint holds stored values.
+    valid: bool,
+}
+
+impl SyllHint {
+    pub(crate) const NONE: Self = Self { hash: 0, len: 0, start: 0, valid: false };
+}
+
+/// Returns where the syllable that the next key edits starts: the last word,
+/// cut before the first letter that made it an invalid syllable. A tone key
+/// after "enl" thus only sees "l", and is typed as a letter.
+///
+/// Returns the start together with a hint for the next call. `hint` should be
+/// the hint returned by the previous call on the prefix of this composition;
+/// [`SyllHint::NONE`] disables resuming. The result is identical with or
+/// without a usable hint.
+pub(crate) fn last_syllable_start(
+    composition: &[Transformation],
+    hint: SyllHint,
+) -> (usize, SyllHint) {
+    let len = composition.len();
+    // Resume: the stored prefix is identical (hash match), the composition
+    // only grew (no delete/replace), and the new tail cannot move the last
+    // word start (appended letters keep an all-letter tail a single word;
+    // mark/tone transformations add no canvas character of their own in the
+    // non-RAW mode the word split uses). Earlier windows then replay
+    // identically and end at the stored start, so only suffix windows past
+    // the stored length need checking.
+    if hint.valid
+        && (hint.len as usize) <= len
+        && len <= MAX_ACTIVE_TRANS
+        && composition[hint.len as usize..].iter().all(|t| {
+            if t.effect_type == EffectType::Appending {
+                // An appended letter keeps the tail one word; anything else
+                // (digit/punctuation) may split it.
+                is_alpha(t.key)
+            } else {
+                // A pure effect adds no canvas character, but only when it
+                // points at a letter (a stray effect without target is not
+                // worth reasoning about — rescan instead).
+                t.has_target()
+            }
+        })
+        && crate::dfa::hash_composition(&composition[..hint.len as usize]) == hint.hash
+    {
+        let mut start = hint.start as usize;
+        for end in hint.len as usize..len {
+            // A one-char window is always valid (`is_valid` returns true for
+            // len <= 1); skip the copy and the call.
+            if end + 1 - start <= 1 {
+                continue;
+            }
+            if !is_valid_from(composition, start, end + 1) {
+                start = end;
+            }
+        }
+        let fixed = pull_effects_back(composition, start);
+        return (fixed, store_hint(composition, start));
+    }
+    let (previous, _) = extract_last_word(composition, None);
+    let mut start = previous.len();
+    for end in start + 1..len {
+        if !is_valid_from(composition, start, end + 1) {
+            start = end;
+        }
+    }
+    let fixed = pull_effects_back(composition, start);
+    (fixed, store_hint(composition, start))
+}
+
+/// Stores a resume hint for `composition`/`start` (`NONE` when too long).
+fn store_hint(composition: &[Transformation], start: usize) -> SyllHint {
+    if composition.len() > MAX_ACTIVE_TRANS || start > MAX_ACTIVE_TRANS {
+        return SyllHint::NONE;
+    }
+    SyllHint {
+        hash: crate::dfa::hash_composition(composition),
+        len: composition.len() as u8,
+        start: start as u8,
+        valid: true,
+    }
+}
+
+/// Index targets cannot point before the slice, so keep effects with their letters.
+fn pull_effects_back(composition: &[Transformation], mut start: usize) -> usize {
+    while let Some(target) = composition[start..]
+        .iter()
+        .filter_map(Transformation::target)
+        .filter(|&t| (t as usize) < start)
+        .min()
+    {
+        start = target as usize;
+    }
+    start
+}
+
+/// `is_valid` on `composition[start..end]`, ignoring effects on letters before `start`.
+fn is_valid_from(composition: &[Transformation], start: usize, end: usize) -> bool {
+    let mut part = [Transformation::default(); MAX_ACTIVE_TRANS];
+    let len = end - start;
+    part[..len].copy_from_slice(&composition[start..end]);
+    for t in &mut part[..len] {
+        if let Some(target) = t.target() {
+            let outside = (target as usize) < start;
+            // Out of range, so it matches no letter, like Go's pointer that is in no list.
+            t.set_target(Some(if outside { MAX_ACTIVE_TRANS as u8 } else { target - start as u8 }));
+        }
+    }
+    is_valid(&part[..len], false)
+}
+
 fn is_effective(composition: &[Transformation], target_idx: usize, new_rule: &Rule) -> bool {
     // Undo pattern: the same tone/mark key pressed twice in a row on the same
     // target (e.g., "ss", "xx"). Deliberately left "not effective" so the
@@ -1125,6 +1257,68 @@ mod tests {
         assert_eq!(fc.len(), 2, "onset should be 'q'+'u' (absorbed by qu rule)");
         assert_eq!(vo.len(), 1, "vowel should be 'a'");
         assert_eq!(lc.len(), 0);
+    }
+
+    /// The resume hint is a pure optimization: for any composition and any
+    /// hint (real, stale, or adversarial garbage), the resumed result must
+    /// equal the full scan.
+    #[test]
+    fn last_syllable_start_resume_matches_full_scan() {
+        fn rng_next(state: &mut u64) -> u64 {
+            *state = state.wrapping_mul(6364136229).wrapping_add(1442695041);
+            *state >> 33
+        }
+        // Letter pool with word breaks (space, digits) mixed in.
+        const KEYS: &[u8] = b"aeioubcdghklmnprstvxzaeioubcdghklmnprstvxz  012 settled";
+        let mut state: u64 = 0x9E3779B97F4A7C15;
+        for _ in 0..300 {
+            let mut comp = Vec::new();
+            let total = 1 + (rng_next(&mut state) as usize % MAX_ACTIVE_TRANS);
+            while comp.len() < total {
+                let r = rng_next(&mut state);
+                if r % 4 == 0 && !comp.is_empty() {
+                    // Effect transformation targeting an existing index.
+                    let target = (r as usize) % comp.len();
+                    let is_tone = (r >> 8) % 2 == 0;
+                    comp.push(Transformation::new(
+                        '\0',
+                        'a',
+                        'a',
+                        Some(target as u8),
+                        (r >> 16) as u8 % 6,
+                        if is_tone {
+                            EffectType::ToneTransformation
+                        } else {
+                            EffectType::MarkTransformation
+                        },
+                        false,
+                    ));
+                } else {
+                    let c = KEYS[(r as usize) % KEYS.len()] as char;
+                    comp.push(appending(c));
+                }
+            }
+            // Incremental typing with real chained hints.
+            let mut hint = SyllHint::NONE;
+            for end in 1..=comp.len() {
+                let (full, _) = last_syllable_start(&comp[..end], SyllHint::NONE);
+                let (resumed, next) = last_syllable_start(&comp[..end], hint);
+                assert_eq!(resumed, full, "chained resume diverged for {comp:?}[..{end}]");
+                hint = next;
+            }
+            let (full, _) = last_syllable_start(&comp, SyllHint::NONE);
+            // Adversarial hints must fall back to the same result.
+            for _ in 0..4 {
+                let evil = SyllHint {
+                    hash: rng_next(&mut state),
+                    len: (rng_next(&mut state) % 20) as u8,
+                    start: (rng_next(&mut state) % 20) as u8,
+                    valid: rng_next(&mut state) % 2 == 0,
+                };
+                let (resumed, _) = last_syllable_start(&comp, evil);
+                assert_eq!(resumed, full, "evil hint {evil:?} diverged for {comp:?}");
+            }
+        }
     }
 
     #[test]
