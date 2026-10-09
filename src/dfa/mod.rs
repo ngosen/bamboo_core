@@ -219,7 +219,7 @@ impl Default for Dfa {
 /// read uninitialized padding (UB, flagged by Miri, and nondeterministic
 /// across builds) — so the field-based hash is both correct and Miri-clean.
 #[inline]
-fn hash_composition(composition: &[Transformation]) -> u64 {
+pub(crate) fn hash_composition(composition: &[Transformation]) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = rustc_hash::FxHasher::default();
     composition.hash(&mut hasher);
