@@ -884,7 +884,17 @@ impl Engine {
     // Like Go's RemoveLastChar: an invalid word keeps its tone where it was
     // typed, so deleting a key brings back the text shown before that key.
     fn may_move_tone(&self) -> bool {
-        self.config.free_tone_marking && self.active_len > 0 && self.is_valid(false)
+        // Refresh is a no-op without a tone to move (mirrors
+        // `refresh_last_tone_target_into`'s early exit on a missing tone
+        // transformation), so the spelling check is skipped and backspacing a
+        // toneless word stays on the previous fast path.
+        self.config.free_tone_marking
+            && self.active_len > 0
+            && self
+                .active_slice()
+                .iter()
+                .any(|t| t.effect_type == EffectType::ToneTransformation && t.has_target())
+            && self.is_valid(false)
     }
 
     fn is_valid_internal(
