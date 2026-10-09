@@ -10,6 +10,7 @@ use std::os::raw::c_char;
 use std::ptr;
 use std::sync::Mutex;
 
+use crate::config::Config;
 use crate::engine::Engine;
 use crate::input_method::InputMethod;
 use crate::mode::Mode;
@@ -273,6 +274,30 @@ pub extern "C" fn bamboo_engine_new(method: i32) -> *mut BambooEngine {
     Box::into_raw(Box::new(Engine::new(im)))
 }
 
+/// Creates a new Bamboo Engine instance with configuration flags.
+///
+/// # Arguments
+///
+/// * `method` - The input method, numbered as in [`bamboo_engine_new`].
+/// * `flags` - A bitmask read by [`Config::from_flags`]:
+///     * 0x01: free tone marking
+///     * 0x02: standard tone style (`hòa`; clear for `hoà`)
+///     * 0x04: auto-correct
+///     * 0x08: `w` becomes `ư` except at the start of a syllable
+///     * 0x10: `w` always becomes `ư` (wins over 0x08)
+///
+///   [`bamboo_engine_new`] uses `0x07`.
+///
+/// # Returns
+///
+/// A pointer to the new [`BambooEngine`] instance.
+/// **Note:** The caller is responsible for freeing the engine using [`bamboo_engine_free`].
+#[unsafe(no_mangle)]
+pub extern "C" fn bamboo_engine_new_with_flags(method: i32, flags: u32) -> *mut BambooEngine {
+    let im = BambooMethod::from_i32(method).to_input_method();
+    Box::into_raw(Box::new(Engine::with_config(im, Config::from_flags(flags))))
+}
+
 /// Frees a Bamboo Engine instance created with [`bamboo_engine_new`].
 ///
 /// # Safety
@@ -430,6 +455,27 @@ mod tests {
             bamboo_engine_free(engine);
             bamboo_engine_free(ptr::null_mut()); // Freeing null should be a no-op
         }
+    }
+
+    #[test]
+    fn test_ffi_engine_new_with_flags() {
+        let typed = |flags: u32| {
+            let engine = bamboo_engine_new_with_flags(0, flags);
+            assert!(!engine.is_null());
+            let mut last = String::new();
+            // SAFETY: `engine` is non-null and freed once below.
+            unsafe {
+                for ch in "nhw".chars() {
+                    let res_ptr = bamboo_engine_process(engine, ch as u32);
+                    last = CStr::from_ptr(res_ptr).to_string_lossy().into_owned();
+                    bamboo_free_string(res_ptr);
+                }
+                bamboo_engine_free(engine);
+            }
+            last
+        };
+        assert_eq!(typed(0x07), "nhw");
+        assert_eq!(typed(0x07 | 0x08), "như");
     }
 
     #[test]

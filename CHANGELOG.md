@@ -6,9 +6,12 @@ All notable changes to this project will be documented in this file.
 
 ### Features
 - **Custom Input Methods:** `InputMethod::from_definition` builds an input method from runtime key → rule pairs in the preset format (e.g. `("q", "DauSac")`), like Go bamboo-core's `ParseInputMethod` on a user map.
+- **`w` to `ư`:** `Config::w2u_mode` / `ConfigBuilder::w2u_mode` take a `W2uMode`: `Disabled` (default, unchanged behaviour), `NonStart` (`nhw` → `như`, a syllable-initial `w` stays `w`) or `Everywhere` (`w` → `ư`).
+- **C configuration:** `bamboo_engine_new_with_flags(method, flags)` creates an engine from `Config::from_flags`; bits 3 (`NonStart`) and 4 (`Everywhere`) select the `w2u_mode`.
 
 ### Bug Fixes
 - **Preset Rule Sharing:** `Engine::new`/`with_config` reuse a preset's shared rules only when the rules match, not just the name and rule count, so a custom input method named like a preset keeps its own keys.
+- **`Engine::set_config`:** cached DFA transitions are dropped when the configuration changes, so new settings apply to words typed afterwards. The method is no longer `const` (breaking change for `const` contexts).
 - **Undoing a mark keeps the tone:** typing a mark key again (`uwfw`, VNI `go366`) no longer drops the tone typed before it, so `uwfw` gives `ùw` instead of `uw`, as in the Go core.
 - **Backspace back to a valid word:** after an undo switched a word to raw keys (`eete` → `ete`), deleting back to a valid word (`et`) lets the next key add marks again, so `eete`, backspace, `e` gives `êt` as in the Go core.
 - **Backspace keeps the tone in place:** `remove_last_output_char` and `remove_last_char` move the tone to its standard position only when free tone marking is on and the remaining word is valid, as in the Go core. Deleting a key from an invalid word now brings back the text shown before that key (`craxyuk`, backspace gives `crãyu`, not `craỹu`).
