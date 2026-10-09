@@ -883,6 +883,22 @@ impl Engine {
         self.is_valid_internal(self.active_slice(), input_is_full_complete)
     }
 
+    // Like Go's RemoveLastChar: an invalid word keeps its tone where it was
+    // typed, so deleting a key brings back the text shown before that key.
+    fn may_move_tone(&self) -> bool {
+        // Refresh is a no-op without a tone to move (mirrors
+        // `refresh_last_tone_target_into`'s early exit on a missing tone
+        // transformation), so the spelling check is skipped and backspacing a
+        // toneless word stays on the previous fast path.
+        self.config.free_tone_marking
+            && self.active_len > 0
+            && self
+                .active_slice()
+                .iter()
+                .any(|t| t.effect_type == EffectType::ToneTransformation && t.has_target())
+            && self.is_valid(false)
+    }
+
     fn is_valid_internal(
         &self,
         composition: &[Transformation],
@@ -900,7 +916,7 @@ impl Engine {
         let restore_mark: RestoreMark = restore_mark.into();
         let refresh_last_tone_target = matches!(restore_mark, RestoreMark::Yes);
 
-        if refresh_last_tone_target && self.active_len > 0 {
+        if refresh_last_tone_target && self.may_move_tone() {
             crate::syllable::refresh_last_tone_target_into(
                 &mut self.active_buffer[..self.active_len],
                 self.config.std_tone_style,
@@ -945,7 +961,7 @@ impl Engine {
         // Detach only with non-empty residue: state 0 soundly identifies empty.
         self.dfa_detached = self.active_len > 0;
 
-        if self.active_len > 0 {
+        if self.may_move_tone() {
             crate::syllable::refresh_last_tone_target_into(
                 &mut self.active_buffer[..self.active_len],
                 self.config.std_tone_style,
