@@ -1265,10 +1265,10 @@ mod tests {
             let total = 1 + (rng_next(&mut state) as usize % MAX_ACTIVE_TRANS);
             while comp.len() < total {
                 let r = rng_next(&mut state);
-                if r % 4 == 0 && !comp.is_empty() {
+                if r.is_multiple_of(4) && !comp.is_empty() {
                     // Effect transformation targeting an existing index.
                     let target = (r as usize) % comp.len();
-                    let is_tone = (r >> 8) % 2 == 0;
+                    let is_tone = (r >> 8).is_multiple_of(2);
                     comp.push(Transformation::new(
                         '\0',
                         'a',
@@ -1298,11 +1298,12 @@ mod tests {
             let (full, _) = last_syllable_start(&comp, SyllHint::NONE);
             // Adversarial hints must fall back to the same result.
             for _ in 0..4 {
+                let flag = rng_next(&mut state);
                 let evil = SyllHint {
                     hash: rng_next(&mut state),
                     len: (rng_next(&mut state) % 20) as u8,
                     start: (rng_next(&mut state) % 20) as u8,
-                    valid: rng_next(&mut state) % 2 == 0,
+                    valid: flag.is_multiple_of(2),
                 };
                 let (resumed, _) = last_syllable_start(&comp, evil);
                 assert_eq!(resumed, full, "evil hint {evil:?} diverged for {comp:?}");
