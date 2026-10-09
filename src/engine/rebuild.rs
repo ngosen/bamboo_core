@@ -31,10 +31,16 @@ impl Engine {
                     OutputOptions::NONE,
                     &mut self.committed_text,
                 );
+                // Keep `committed_raw` in step like `commit()` does: the
+                // original keystrokes are unknowable for pre-existing text,
+                // so the rebuilt roots stand in for the raw keys.
+                crate::flattener::append_raw_keys(comp.as_slice(), &mut self.committed_raw);
             } else {
                 self.committed_text.push_str(word);
+                self.committed_raw.push_str(word);
             }
             self.committed_text.push(c);
+            self.committed_raw.push(c);
             word_start = i + c.len_utf8();
         }
         let word = &text[word_start..];
@@ -42,6 +48,7 @@ impl Engine {
             self.set_active_from_stack(&mut comp);
         } else {
             self.committed_text.push_str(word);
+            self.committed_raw.push_str(word);
         }
         self.update_cached_output();
     }

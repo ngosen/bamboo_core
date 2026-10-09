@@ -27,6 +27,8 @@ pub use state::{MAX_ACTIVE_TRANS, RestoreMark, Transformation, TransformationSta
 #[derive(Debug)]
 pub struct Engine {
     committed_text: String,
+    /// Keys behind `committed_text`, so `RAW | FULL_TEXT` can cover committed words.
+    committed_raw: String,
     /// Cached preedit string of the active composition for zero-allocation [`output()`](Self::output).
     cached_output: String,
     /// Stack-allocated buffer for the active composition to avoid heap allocations.
@@ -108,6 +110,7 @@ impl Engine {
     ) -> Self {
         Self {
             committed_text: String::with_capacity(128),
+            committed_raw: String::new(),
             cached_output: String::with_capacity(32),
             active_buffer: [Transformation::default(); MAX_ACTIVE_TRANS],
             active_len: 0,
@@ -819,6 +822,10 @@ impl Engine {
             OutputOptions::NONE,
             &mut self.committed_text,
         );
+        crate::flattener::append_raw_keys(
+            &self.active_buffer[..self.active_len],
+            &mut self.committed_raw,
+        );
         self.cached_output.clear();
         self.active_len = 0;
         self.current_state_id = 0;
@@ -849,13 +856,24 @@ impl Engine {
     pub fn get_processed_str_cow(&self, options: OutputOptions) -> Cow<'_, str> {
         let active = self.active_slice();
         if options.contains(OutputOptions::FULL_TEXT) {
-            if active.is_empty() {
-                return Cow::Borrowed(&self.committed_text);
+            // Like Go, FULL_TEXT ignores PUNCTUATION_MODE.
+            let options = options - OutputOptions::FULL_TEXT - OutputOptions::PUNCTUATION_MODE;
+            let committed = if options.contains(OutputOptions::RAW) {
+                &self.committed_raw
+            } else {
+                &self.committed_text
+            };
+            let char_options = options - OutputOptions::RAW;
+            if active.is_empty() && char_options.is_empty() {
+                return Cow::Borrowed(committed);
             }
-            let mut result =
-                String::with_capacity(self.committed_text.len() + self.cached_output.len());
-            result.push_str(&self.committed_text);
-            result.push_str(&self.cached_output);
+            let mut result = String::with_capacity(committed.len() + self.cached_output.len());
+            crate::flattener::append_text_with_options(committed, char_options, &mut result);
+            if options == OutputOptions::NONE {
+                result.push_str(&self.cached_output);
+            } else {
+                crate::flattener::append_flatten_slice(active, options, &mut result);
+            }
             return Cow::Owned(result);
         }
         if options.contains(OutputOptions::PUNCTUATION_MODE) {
@@ -984,6 +1002,7 @@ impl Engine {
     /// Resets the engine state, clearing committed and active text.
     pub fn reset(&mut self) {
         self.committed_text.clear();
+        self.committed_raw.clear();
         self.cached_output.clear();
         self.active_len = 0;
         self.prev_preedit.clear();

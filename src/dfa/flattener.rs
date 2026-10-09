@@ -35,6 +35,35 @@ pub(crate) fn append_flatten_slice(
     write_canvas_slice(composition, options, out);
 }
 
+/// Same output as flattening with [`OutputOptions::RAW`], without the canvas
+/// setup, since `commit()` runs it on every word.
+pub(crate) fn append_raw_keys(composition: &[Transformation], out: &mut String) {
+    for t in composition.iter().filter(|t| t.key != '\0') {
+        out.push(if t.is_upper_case { upper(t.key) } else { t.key });
+    }
+}
+
+/// Appends already flattened text, applying the per-character options the
+/// flattener would have applied (committed words keep no transformations).
+pub(crate) fn append_text_with_options(text: &str, options: OutputOptions, out: &mut String) {
+    if options.is_empty() {
+        out.push_str(text);
+        return;
+    }
+    for c in text.chars() {
+        // Tone and mark tables are lowercase-only.
+        let mut chr = lower(c);
+        if options.contains(OutputOptions::TONE_LESS) {
+            chr = add_tone_to_char(chr, 0);
+        }
+        if options.contains(OutputOptions::MARK_LESS) {
+            chr = crate::phonetics::add_mark_to_toneless_char(add_tone_to_char(chr, 0), 0);
+        }
+        let keep_upper = !options.contains(OutputOptions::LOWER_CASE) && c != lower(c);
+        out.push(if keep_upper { upper(chr) } else { chr });
+    }
+}
+
 #[inline]
 fn estimate_cap_bytes_slice(composition: &[Transformation], options: OutputOptions) -> usize {
     let char_count = if options.contains(OutputOptions::RAW) {
