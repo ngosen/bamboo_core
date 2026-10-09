@@ -168,8 +168,13 @@ fn find_vowel_position(c: char) -> Option<usize> {
 }
 
 #[inline]
-fn find_tone_from_char(c: char) -> u8 {
+pub(crate) fn find_tone_from_char(c: char) -> u8 {
     if c.is_ascii() { 0 } else { find_vowel_position(c).map_or(0, |pos| (pos % 6) as u8) }
+}
+
+/// Returns the diacritic mark of a toneless character (`Some(0)` for its plain base).
+pub(crate) fn find_mark_from_char(c: char) -> Option<u8> {
+    MARKS_MAPS.get(&c)?.iter().position(|&m| m == c).map(|pos| pos as u8)
 }
 
 /// Adds or changes the tone mark of a Vietnamese vowel.
